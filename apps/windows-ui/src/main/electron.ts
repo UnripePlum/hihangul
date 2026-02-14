@@ -3,6 +3,8 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+let mainWindow: BrowserWindow | null = null;
+let codexLoginWatcher: NodeJS.Timeout | null = null;
 
 // Parallels Windows VM compatibility and remote debugging settings.
 app.disableHardwareAcceleration();
@@ -48,8 +50,59 @@ function ensureProviderCli(provider: "claude" | "codex"): { ok: boolean; message
   };
 }
 
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.moveTop();
+}
+
+function isCodexLoggedIn(): boolean {
+  const status = spawnSync("codex", ["login", "status"], {
+    shell: true,
+    stdio: "pipe",
+    encoding: "utf-8",
+  });
+  if (status.status !== 0) {
+    return false;
+  }
+  const output = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
+  return output.includes("logged in");
+}
+
+function startCodexLoginWatcher(): void {
+  if (codexLoginWatcher) {
+    clearInterval(codexLoginWatcher);
+    codexLoginWatcher = null;
+  }
+
+  let attempts = 0;
+  const maxAttempts = 120; // 4 minutes
+
+  codexLoginWatcher = setInterval(() => {
+    attempts += 1;
+    if (isCodexLoggedIn()) {
+      if (codexLoginWatcher) {
+        clearInterval(codexLoginWatcher);
+        codexLoginWatcher = null;
+      }
+      focusMainWindow();
+      return;
+    }
+    if (attempts >= maxAttempts && codexLoginWatcher) {
+      clearInterval(codexLoginWatcher);
+      codexLoginWatcher = null;
+    }
+  }, 2000);
+}
+
 function createMainWindow(): void {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
     webPreferences: {
@@ -59,11 +112,15 @@ function createMainWindow(): void {
     }
   });
 
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
   if (isDev) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-    win.webContents.openDevTools({ mode: "detach" });
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    win.loadFile(path.join(app.getAppPath(), "dist/index.html"));
+    mainWindow.loadFile(path.join(app.getAppPath(), "dist/index.html"));
   }
 }
 
@@ -88,10 +145,18 @@ app.whenReady().then(() => {
     }
 
     if (process.platform === "win32") {
-      spawn("cmd.exe", ["/c", "start", "Codex Login", "cmd.exe", "/k", "codex login"], {
+      spawn("cmd.exe", [
+        "/c",
+        "start",
+        "Codex Login",
+        "cmd.exe",
+        "/c",
+        "codex login || (echo Codex login failed. Press any key to close... & pause >nul)",
+      ], {
         detached: true,
         stdio: "ignore",
       }).unref();
+      startCodexLoginWatcher();
       return { launched: true, platform: process.platform, message: "codex login terminal launched" };
     }
 
