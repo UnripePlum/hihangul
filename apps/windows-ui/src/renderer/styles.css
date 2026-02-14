@@ -1,0 +1,110 @@
+:root {
+  --bg: #f1efe8;
+  --panel: #fffdf7;
+  --border: #cfc5b2;
+  --text: #1e1a14;
+  --accent: #0b6f62;
+  --secondary: #1f2937;
+  --error: #a8071a;
+  --active: #0f766e;
+  --font: "Iowan Old Style", "Palatino Linotype", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 10%, #e9e1d2 0, transparent 42%),
+    radial-gradient(circle at 90% 85%, #deebdf 0, transparent 35%),
+    var(--bg);
+  font-family: var(--font);
+}
+
+.page {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-panel {
+  width: min(560px, 100%);
+}
+
+.panel {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.06);
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+input,
+select,
+textarea,
+button {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+button.secondary {
+  background: var(--secondary);
+}
+
+pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fffcf6;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 0.82rem;
+}
+
+.error {
+  color: var(--error);
+}
+
+@media (max-width: 920px) {
+  .page {
+    grid-template-columns: 1fr;
+  }
+}
