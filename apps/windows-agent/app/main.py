@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from .hwp_controller import build_controller
 from .models import ExecuteRequest, ExecuteResponse, PackageRequest, PackageResponse
 from .packager import ProgramPackager
-from .sandbox import run_workflow
+from .sandbox import WorkflowRuntimeError, run_workflow
 from .validator import UnsafeCodeError, validate_python
 
 app = FastAPI(title="HiHangul Windows Agent", version="0.2.0")
@@ -33,11 +33,18 @@ async def chrome_debug_hint() -> dict:
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
     try:
         validate_python(req.code)
-    except UnsafeCodeError as exc:
+    except (SyntaxError, UnsafeCodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    controller = build_controller(req.adapter)
-    result = run_workflow(req.code, controller, req.dry_run)
+    try:
+        controller = build_controller(req.adapter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        result = run_workflow(req.code, controller, req.dry_run)
+    except WorkflowRuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ExecuteResponse(status="ok", run_id=req.run_id, adapter=req.adapter, result=result)
 
 
