@@ -291,7 +291,7 @@ export function App(): JSX.Element {
       window.setTimeout(() => {
         setIsLoggedIn(true);
         setShowLoginTransition(false);
-      }, 5000);
+      }, 3000);
       return;
     } catch (saveError) {
       const msg = (saveError as Error).message;

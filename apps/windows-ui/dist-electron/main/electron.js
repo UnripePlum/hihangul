@@ -8,7 +8,6 @@ const node_child_process_1 = require("node:child_process");
 const node_path_1 = __importDefault(require("node:path"));
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 let mainWindow = null;
-let codexLoginWatcher = null;
 // Parallels Windows VM compatibility and remote debugging settings.
 electron_1.app.disableHardwareAcceleration();
 electron_1.app.commandLine.appendSwitch("no-sandbox");
@@ -53,9 +52,18 @@ function focusMainWindow() {
     if (mainWindow.isMinimized()) {
         mainWindow.restore();
     }
+    // Windows에서는 focus/moveTop만으로 전면 복귀가 실패할 수 있어
+    // alwaysOnTop을 짧게 사용해 포커스를 확보한다.
+    mainWindow.setAlwaysOnTop(true, "screen-saver");
     mainWindow.show();
     mainWindow.focus();
     mainWindow.moveTop();
+    setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            return;
+        }
+        mainWindow.setAlwaysOnTop(false);
+    }, 1200);
 }
 function isCodexLoggedIn() {
     const status = (0, node_child_process_1.spawnSync)("codex", ["login", "status"], {
@@ -69,28 +77,16 @@ function isCodexLoggedIn() {
     const output = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
     return output.includes("logged in");
 }
-function startCodexLoginWatcher() {
-    if (codexLoginWatcher) {
-        clearInterval(codexLoginWatcher);
-        codexLoginWatcher = null;
-    }
-    let attempts = 0;
-    const maxAttempts = 120; // 4 minutes
-    codexLoginWatcher = setInterval(() => {
-        attempts += 1;
+async function waitForCodexLoginAndFocus(timeoutMs = 240000, intervalMs = 2000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
         if (isCodexLoggedIn()) {
-            if (codexLoginWatcher) {
-                clearInterval(codexLoginWatcher);
-                codexLoginWatcher = null;
-            }
             focusMainWindow();
-            return;
+            return true;
         }
-        if (attempts >= maxAttempts && codexLoginWatcher) {
-            clearInterval(codexLoginWatcher);
-            codexLoginWatcher = null;
-        }
-    }, 2000);
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return false;
 }
 function createMainWindow() {
     mainWindow = new electron_1.BrowserWindow({
@@ -143,22 +139,33 @@ electron_1.app.whenReady().then(() => {
                 detached: true,
                 stdio: "ignore",
             }).unref();
-            startCodexLoginWatcher();
-            return { launched: true, platform: process.platform, message: "codex login terminal launched" };
+            const ok = await waitForCodexLoginAndFocus();
+            if (!ok) {
+                return { launched: false, platform: process.platform, message: "codex login timed out" };
+            }
+            return { launched: true, platform: process.platform, message: "codex login completed" };
         }
         if (process.platform === "darwin") {
             (0, node_child_process_1.spawn)("osascript", ["-e", 'tell application "Terminal" to do script "codex login"'], {
                 detached: true,
                 stdio: "ignore",
             }).unref();
-            return { launched: true, platform: process.platform, message: "codex login terminal launched" };
+            const ok = await waitForCodexLoginAndFocus();
+            if (!ok) {
+                return { launched: false, platform: process.platform, message: "codex login timed out" };
+            }
+            return { launched: true, platform: process.platform, message: "codex login completed" };
         }
         (0, node_child_process_1.spawn)("x-terminal-emulator", ["-e", "codex login"], {
             detached: true,
             stdio: "ignore",
             shell: true,
         }).unref();
-        return { launched: true, platform: process.platform, message: "codex login terminal launched" };
+        const ok = await waitForCodexLoginAndFocus();
+        if (!ok) {
+            return { launched: false, platform: process.platform, message: "codex login timed out" };
+        }
+        return { launched: true, platform: process.platform, message: "codex login completed" };
     });
     electron_1.ipcMain.handle("auth:ensure-provider-cli", async (_event, provider) => {
         return ensureProviderCli(provider);
