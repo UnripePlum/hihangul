@@ -57,3 +57,21 @@ class LaneStatusView(BaseModel):
     queued_tasks: int
     worker_started: bool
     active_session_id: str | None = None
+
+
+class RunRecordView(BaseModel):
+    run_id: str
+    lane_id: str
+    session_id: str
+    user_id: str
+    status: str
+    plan_title: str
+    provider: str
+    profile_id: str
+    dry_run: bool
+    persist_program: bool
+    execution: dict | None = None
+    package: dict | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str

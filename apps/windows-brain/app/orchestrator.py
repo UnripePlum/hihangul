@@ -21,11 +21,11 @@ class LLMOrchestrator:
     def generate_code(self, assembled_prompt: str, provider: str, profile_id: str) -> str:
         chosen_model = self._choose_model(provider, assembled_prompt)
         return (
-            f"# provider: {provider}\\n"
-            f"# profile_id: {profile_id}\\n"
-            f"# model: {chosen_model}\\n"
-            "def run(controller):\\n"
-            "    controller.open_document('input.hwp')\\n"
-            "    controller.insert_text('HiHangul 자동화 작업이 완료되었습니다.')\\n"
-            "    controller.save_document('output.hwp')\\n"
+            f"# provider: {provider}\n"
+            f"# profile_id: {profile_id}\n"
+            f"# model: {chosen_model}\n"
+            "def run(controller):\n"
+            "    controller.open_document('input.hwp')\n"
+            "    controller.insert_text('HiHangul 자동화 작업이 완료되었습니다.')\n"
+            "    controller.save_document('output.hwp')\n"
         )
