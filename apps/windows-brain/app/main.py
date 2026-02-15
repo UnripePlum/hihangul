@@ -12,13 +12,14 @@ from .auth_profiles import AuthProfileError, AuthProfileStore
 from .bridge import ParallelsBridgeClient
 from .codex_auth import get_codex_auth_status
 from .config import WINDOWS_AGENT_BASE_URL
-from .guardrails import GUARDRAIL_POLICY
+from .guardrails import GUARDRAIL_POLICY, validate_generated_code
 from .lane_queue import LaneQueueManager, LaneTask
 from .memory import HybridMemory
 from .models import (
     AuthProfileUpsertRequest,
     AuthProfileView,
     LaneStatusView,
+    RunRecordView,
     SessionMessageView,
     SessionSummaryView,
     TaskRequest,
@@ -76,6 +77,17 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     nlu = nlu_engine.parse(user_input)
     plan = planner.build_plan(nlu)
     memory.append_session_message(session_id, "user", user_input)
+    memory.create_run_record(
+        run_id=run_id,
+        lane_id=lane_id,
+        session_id=session_id,
+        user_id=user_id,
+        plan_title=plan.title,
+        provider=provider,
+        profile_id=profile_id,
+        dry_run=payload["dry_run"],
+        persist_program=payload["persist_program"],
+    )
 
     snippets = memory.query_recent_knowledge(limit=3)
     search_hits = memory.search_index(keyword=user_input, limit=2)
@@ -90,17 +102,62 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         guardrail_policy=GUARDRAIL_POLICY,
     )
     generated_code = orchestrator.generate_code(assembled_prompt, provider=provider, profile_id=profile_id)
+    violations = validate_generated_code(generated_code)
+    if violations:
+        memory.finish_run_record(
+            run_id,
+            status="rejected",
+            execution=None,
+            package=None,
+            error_message="; ".join(violations),
+        )
+        memory.append_log(
+            {
+                "event": "task_rejected",
+                "run_id": run_id,
+                "lane_id": lane_id,
+                "session_id": session_id,
+                "user_id": user_id,
+                "provider": provider,
+                "profile_id": profile_id,
+                "violations": violations,
+            }
+        )
+        raise HTTPException(status_code=400, detail={"code_guardrail_violations": violations})
 
-    execution = await bridge.execute_generated_code(
-        run_id=run_id,
-        code=generated_code,
-        adapter=payload["adapter"],
-        dry_run=payload["dry_run"],
-    )
-
+    execution = None
     package = None
-    if payload["persist_program"] and execution.get("status") == "ok":
-        package = await bridge.package_program(run_id, plan.title, generated_code)
+    try:
+        execution = await bridge.execute_generated_code(
+            run_id=run_id,
+            code=generated_code,
+            adapter=payload["adapter"],
+            dry_run=payload["dry_run"],
+        )
+        if payload["persist_program"] and execution.get("status") == "ok":
+            package = await bridge.package_program(run_id, plan.title, generated_code)
+    except Exception as exc:  # noqa: BLE001
+        message = f"windows-agent bridge error: {exc}"
+        memory.finish_run_record(
+            run_id,
+            status="failed",
+            execution=execution,
+            package=package,
+            error_message=message,
+        )
+        memory.append_log(
+            {
+                "event": "task_failed",
+                "run_id": run_id,
+                "lane_id": lane_id,
+                "session_id": session_id,
+                "user_id": user_id,
+                "provider": provider,
+                "profile_id": profile_id,
+                "error_message": message,
+            }
+        )
+        raise HTTPException(status_code=502, detail=message) from exc
 
     memory.append_knowledge(f"- user={user_id} lane={lane_id} task={user_input}")
     memory.append_session_message(session_id, "assistant", f"plan={plan.title} run_id={run_id}")
@@ -119,6 +176,13 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         }
     )
     memory.upsert_index(session_id, user_input)
+    memory.finish_run_record(
+        run_id,
+        status="completed",
+        execution=execution,
+        package=package,
+        error_message=None,
+    )
 
     return {
         "lane_id": lane_id,
@@ -145,6 +209,24 @@ async def codex_auth_status() -> dict:
         "login_required": status.login_required,
         "message": status.message,
     }
+
+
+@app.get("/v1/runs", response_model=list[RunRecordView])
+async def list_runs(limit: int = 50) -> list[RunRecordView]:
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be in range 1..500")
+    records = memory.list_run_records(limit=limit)
+    return [RunRecordView(**item) for item in records]
+
+
+@app.get("/v1/runs/{run_id}", response_model=RunRecordView)
+async def get_run(run_id: str) -> RunRecordView:
+    if not run_id.strip():
+        raise HTTPException(status_code=400, detail="run_id is required")
+    record = memory.get_run_record(run_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="run record not found")
+    return RunRecordView(**record)
 
 
 @app.get("/v1/sessions", response_model=list[SessionSummaryView])

@@ -31,6 +31,25 @@ class HybridMemory:
             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
             ")"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS run_records ("
+            "run_id TEXT PRIMARY KEY, "
+            "lane_id TEXT NOT NULL, "
+            "session_id TEXT NOT NULL, "
+            "user_id TEXT NOT NULL, "
+            "status TEXT NOT NULL, "
+            "plan_title TEXT NOT NULL, "
+            "provider TEXT NOT NULL, "
+            "profile_id TEXT NOT NULL, "
+            "dry_run INTEGER NOT NULL, "
+            "persist_program INTEGER NOT NULL, "
+            "execution_json TEXT, "
+            "package_json TEXT, "
+            "error_message TEXT, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        )
         conn.commit()
         conn.close()
 
@@ -111,3 +130,102 @@ class HybridMemory:
             }
             for row in rows
         ]
+
+    def create_run_record(
+        self,
+        run_id: str,
+        lane_id: str,
+        session_id: str,
+        user_id: str,
+        plan_title: str,
+        provider: str,
+        profile_id: str,
+        dry_run: bool,
+        persist_program: bool,
+    ) -> None:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO run_records("
+            "run_id, lane_id, session_id, user_id, status, plan_title, provider, profile_id, dry_run, persist_program"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                lane_id,
+                session_id,
+                user_id,
+                "queued",
+                plan_title,
+                provider,
+                profile_id,
+                int(dry_run),
+                int(persist_program),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def finish_run_record(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        execution: dict | None,
+        package: dict | None,
+        error_message: str | None,
+    ) -> None:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "UPDATE run_records "
+            "SET status = ?, execution_json = ?, package_json = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE run_id = ?",
+            (
+                status,
+                json.dumps(execution, ensure_ascii=False) if execution is not None else None,
+                json.dumps(package, ensure_ascii=False) if package is not None else None,
+                error_message,
+                run_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_run_record(self, run_id: str) -> dict | None:
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT run_id, lane_id, session_id, user_id, status, plan_title, provider, profile_id, "
+            "dry_run, persist_program, execution_json, package_json, error_message, created_at, updated_at "
+            "FROM run_records WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        conn.close()
+        return self._map_run_row(row) if row else None
+
+    def list_run_records(self, limit: int = 50) -> list[dict]:
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute(
+            "SELECT run_id, lane_id, session_id, user_id, status, plan_title, provider, profile_id, "
+            "dry_run, persist_program, execution_json, package_json, error_message, created_at, updated_at "
+            "FROM run_records ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [self._map_run_row(row) for row in rows]
+
+    def _map_run_row(self, row: tuple) -> dict:
+        return {
+            "run_id": row[0],
+            "lane_id": row[1],
+            "session_id": row[2],
+            "user_id": row[3],
+            "status": row[4],
+            "plan_title": row[5],
+            "provider": row[6],
+            "profile_id": row[7],
+            "dry_run": bool(row[8]),
+            "persist_program": bool(row[9]),
+            "execution": json.loads(row[10]) if row[10] else None,
+            "package": json.loads(row[11]) if row[11] else None,
+            "error_message": row[12],
+            "created_at": row[13],
+            "updated_at": row[14],
+        }
