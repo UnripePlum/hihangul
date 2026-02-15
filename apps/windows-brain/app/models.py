@@ -37,3 +37,23 @@ class AuthProfileView(BaseModel):
     provider: str
     auth_mode: str
     metadata: dict
+
+
+class SessionSummaryView(BaseModel):
+    session_id: str
+    updated_at: str
+    message_count: int
+
+
+class SessionMessageView(BaseModel):
+    session_id: str
+    role: str
+    content: str
+    created_at: str
+
+
+class LaneStatusView(BaseModel):
+    lane_id: str
+    queued_tasks: int
+    worker_started: bool
+    active_session_id: str | None = None

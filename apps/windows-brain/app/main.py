@@ -15,7 +15,15 @@ from .config import WINDOWS_AGENT_BASE_URL
 from .guardrails import GUARDRAIL_POLICY
 from .lane_queue import LaneQueueManager, LaneTask
 from .memory import HybridMemory
-from .models import AuthProfileUpsertRequest, AuthProfileView, TaskRequest, TaskResult
+from .models import (
+    AuthProfileUpsertRequest,
+    AuthProfileView,
+    LaneStatusView,
+    SessionMessageView,
+    SessionSummaryView,
+    TaskRequest,
+    TaskResult,
+)
 from .nlu import NLUEngine
 from .orchestrator import LLMOrchestrator
 from .planner import AgentPlanner
@@ -67,12 +75,18 @@ async def process_task(lane_id: str, payload: dict) -> dict:
 
     nlu = nlu_engine.parse(user_input)
     plan = planner.build_plan(nlu)
+    memory.append_session_message(session_id, "user", user_input)
+
     snippets = memory.query_recent_knowledge(limit=3)
+    search_hits = memory.search_index(keyword=user_input, limit=2)
+    session_messages = memory.get_session_messages(session_id=session_id, limit=8)
+    session_context = [f"{item['role']}: {item['content']}" for item in session_messages]
 
     assembled_prompt = prompt_assembler.build_prompt(
         user_input=user_input,
         plan=plan,
-        memory_snippets=snippets,
+        memory_snippets=[*snippets, *search_hits],
+        session_context=session_context,
         guardrail_policy=GUARDRAIL_POLICY,
     )
     generated_code = orchestrator.generate_code(assembled_prompt, provider=provider, profile_id=profile_id)
@@ -89,6 +103,7 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         package = await bridge.package_program(run_id, plan.title, generated_code)
 
     memory.append_knowledge(f"- user={user_id} lane={lane_id} task={user_input}")
+    memory.append_session_message(session_id, "assistant", f"plan={plan.title} run_id={run_id}")
     memory.append_log(
         {
             "event": "task_processed",
@@ -130,6 +145,37 @@ async def codex_auth_status() -> dict:
         "login_required": status.login_required,
         "message": status.message,
     }
+
+
+@app.get("/v1/sessions", response_model=list[SessionSummaryView])
+async def list_sessions(limit: int = 30) -> list[SessionSummaryView]:
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be in range 1..500")
+    sessions = memory.list_sessions(limit=limit)
+    return [SessionSummaryView(**item) for item in sessions]
+
+
+@app.get("/v1/sessions/{session_id}/messages", response_model=list[SessionMessageView])
+async def session_messages(session_id: str, limit: int = 100) -> list[SessionMessageView]:
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="limit must be in range 1..1000")
+    messages = memory.get_session_messages(session_id=session_id, limit=limit)
+    return [SessionMessageView(**item) for item in messages]
+
+
+@app.get("/v1/lanes/status", response_model=list[LaneStatusView])
+async def lane_status_list() -> list[LaneStatusView]:
+    statuses = lane_manager.all_lane_statuses()
+    return [LaneStatusView(**item) for item in statuses]
+
+
+@app.get("/v1/lanes/{lane_id}/status", response_model=LaneStatusView)
+async def lane_status(lane_id: str) -> LaneStatusView:
+    if not lane_id.strip():
+        raise HTTPException(status_code=400, detail="lane_id is required")
+    return LaneStatusView(**lane_manager.lane_status(lane_id))
 
 
 @app.get("/v1/auth/profiles", response_model=list[AuthProfileView])

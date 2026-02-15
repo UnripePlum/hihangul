@@ -59,8 +59,7 @@
 - `apps/windows-ui/src/renderer/styles.css`
 - `scripts/dev/run_windows_brain_windows.cmd`
 - `scripts/dev/run_windows_agent_windows.cmd`
-- `scripts/dev/start_hihangul_windows.cmd`
-- `scripts/dev/sync_to_windows.cmd`
+    - `scripts/dev/sync_to_windows.cmd`
 
 ## 검증
 - `apps/windows-ui`에서 `npm run build` 반복 검증 완료.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -34,7 +34,7 @@ class AuthProfileStore:
         metadata: dict,
     ) -> dict:
         payload = self._read()
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         profile = {
             "profile_id": profile_id,
             "provider": provider,
