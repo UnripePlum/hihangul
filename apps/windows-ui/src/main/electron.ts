@@ -1,24 +1,30 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 let mainWindow: BrowserWindow | null = null;
+const SESSION_STORE_DIR = "session-store";
+const SESSION_STORE_FILE = "sessions.json";
+const SESSION_AUDIT_FILE = "session-events.jsonl";
+const ENABLE_REMOTE_DEBUG =
+  isDev && process.env.HIHANGUL_ENABLE_REMOTE_DEBUGGING === "1";
 
-// Parallels Windows VM compatibility and remote debugging settings.
+// VM compatibility.
 app.disableHardwareAcceleration();
-app.commandLine.appendSwitch("no-sandbox");
-app.commandLine.appendSwitch("disable-gpu-sandbox");
-app.commandLine.appendSwitch("remote-debugging-port", "9222");
-app.commandLine.appendSwitch("remote-debugging-address", "0.0.0.0");
-app.commandLine.appendSwitch("remote-allow-origins", "*");
+if (ENABLE_REMOTE_DEBUG) {
+  app.commandLine.appendSwitch("remote-debugging-port", "9222");
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+}
 
 function hasCommand(command: string): boolean {
   if (process.platform === "win32") {
-    const res = spawnSync("where", [command], { shell: true, stdio: "ignore" });
+    const res = spawnSync("where.exe", [command], { stdio: "ignore" });
     return res.status === 0;
   }
-  const res = spawnSync("command", ["-v", command], { shell: true, stdio: "ignore" });
+  const res = spawnSync("which", [command], { stdio: "ignore" });
   return res.status === 0;
 }
 
@@ -32,7 +38,6 @@ function ensureProviderCli(provider: "claude" | "codex"): { ok: boolean; message
 
   const installer = process.platform === "win32" ? "npm.cmd" : "npm";
   const install = spawnSync(installer, ["install", "-g", packageName], {
-    shell: true,
     stdio: "pipe",
     encoding: "utf-8",
   });
@@ -72,7 +77,6 @@ function focusMainWindow(): void {
 
 function isCodexLoggedIn(): boolean {
   const status = spawnSync("codex", ["login", "status"], {
-    shell: true,
     stdio: "pipe",
     encoding: "utf-8",
   });
@@ -110,7 +114,9 @@ function createMainWindow(): void {
     webPreferences: {
       preload: path.join(__dirname, "../preload/preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     }
   });
 
@@ -118,11 +124,108 @@ function createMainWindow(): void {
     mainWindow = null;
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event) => {
+    event.preventDefault();
+  });
+
+  if (!isDev) {
+    const csp =
+      "default-src 'self'; " +
+      "script-src 'self' https://cdn.tailwindcss.com; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data:; " +
+      "font-src 'self' data:; " +
+      "connect-src 'self' https://cdn.tailwindcss.com; " +
+      "object-src 'none'; " +
+      "base-uri 'self'; " +
+      "frame-ancestors 'none'";
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [csp],
+        },
+      });
+    });
+  }
+
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), "dist/index.html"));
+  }
+}
+
+function getSessionStorePaths(): { dir: string; dataFile: string; auditFile: string } {
+  const dir = path.join(app.getPath("userData"), SESSION_STORE_DIR);
+  return {
+    dir,
+    dataFile: path.join(dir, SESSION_STORE_FILE),
+    auditFile: path.join(dir, SESSION_AUDIT_FILE),
+  };
+}
+
+function sanitizeText(value: unknown, maxLen: number): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "");
+  return trimmed.slice(0, maxLen);
+}
+
+function sanitizeSessionStore(input: unknown): { sessions: Array<Record<string, unknown>>; activeSessionId: string } {
+  const src = (input ?? {}) as { sessions?: unknown; activeSessionId?: unknown };
+  const sessionsRaw = Array.isArray(src.sessions) ? src.sessions : [];
+  const sessions = sessionsRaw.slice(0, 200).map((item, index) => {
+    const session = (item ?? {}) as {
+      id?: unknown;
+      title?: unknown;
+      updatedAt?: unknown;
+      messages?: unknown;
+    };
+    const id = sanitizeText(session.id, 128) || `session-${Date.now()}-${index}`;
+    const title = sanitizeText(session.title, 120) || "새 세션";
+    const updatedAt = typeof session.updatedAt === "number" ? session.updatedAt : Date.now();
+    const messagesRaw = Array.isArray(session.messages) ? session.messages : [];
+    const messages = messagesRaw.slice(0, 500).map((msg, msgIndex) => {
+      const m = (msg ?? {}) as { id?: unknown; role?: unknown; content?: unknown };
+      const role = m.role === "user" || m.role === "assistant" || m.role === "system" ? m.role : "assistant";
+      return {
+        id: sanitizeText(m.id, 128) || `msg-${Date.now()}-${msgIndex}`,
+        role,
+        content: sanitizeText(m.content, 4000),
+      };
+    });
+    return { id, title, updatedAt, messages };
+  });
+  const activeSessionId = sanitizeText(src.activeSessionId, 128);
+  return { sessions, activeSessionId };
+}
+
+function encodeSessionPayload(payload: string): string {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return payload;
+  }
+  const encrypted = safeStorage.encryptString(payload);
+  return JSON.stringify({
+    encoding: "safeStorage+base64",
+    data: encrypted.toString("base64"),
+  });
+}
+
+function decodeSessionPayload(raw: string): string {
+  try {
+    const wrapped = JSON.parse(raw) as { encoding?: string; data?: string };
+    if (wrapped?.encoding === "safeStorage+base64" && typeof wrapped.data === "string") {
+      if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error("Encrypted session exists but safeStorage is unavailable.");
+      }
+      const buf = Buffer.from(wrapped.data, "base64");
+      return safeStorage.decryptString(buf);
+    }
+    return raw;
+  } catch {
+    return raw;
   }
 }
 
@@ -135,6 +238,74 @@ app.whenReady().then(() => {
       platform: process.platform,
       now: new Date().toISOString()
     };
+  });
+
+  ipcMain.handle("session:load", async () => {
+    try {
+      const { dataFile } = getSessionStorePaths();
+      const raw = await fs.readFile(dataFile, "utf-8");
+      const decoded = decodeSessionPayload(raw);
+      const parsed = JSON.parse(decoded) as unknown;
+      const sanitized = sanitizeSessionStore(parsed);
+      return { ok: true, ...sanitized };
+    } catch {
+      return { ok: true, sessions: [], activeSessionId: "" };
+    }
+  });
+
+  ipcMain.handle("session:save", async (_event, payload: unknown) => {
+    try {
+      const { dir, dataFile, auditFile } = getSessionStorePaths();
+      const sanitized = sanitizeSessionStore(payload);
+      await fs.mkdir(dir, { recursive: true });
+      const tmpFile = `${dataFile}.tmp`;
+      const serialized = JSON.stringify(sanitized, null, 2);
+      const encoded = encodeSessionPayload(serialized);
+      await fs.writeFile(tmpFile, encoded, { encoding: "utf-8", mode: 0o600 });
+      await fs.rename(tmpFile, dataFile);
+      const audit = {
+        ts: new Date().toISOString(),
+        event: "session_save",
+        sessions: sanitized.sessions.length,
+        activeSessionId: sanitized.activeSessionId,
+      };
+      await fs.appendFile(auditFile, `${JSON.stringify(audit)}\n`, { encoding: "utf-8", mode: 0o600 });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle("system:get-host-user", async () => {
+    try {
+      const info = os.userInfo();
+      const username = info.username || process.env.USERNAME || process.env.USER || "User";
+      return {
+        ok: true,
+        username,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        username: process.env.USERNAME || process.env.USER || "User",
+        message: (error as Error).message,
+      };
+    }
+  });
+
+  ipcMain.handle("system:get-app-version", async () => {
+    try {
+      return {
+        ok: true,
+        version: app.getVersion(),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        version: "0.0.0",
+        message: (error as Error).message,
+      };
+    }
   });
 
   ipcMain.handle("auth:codex-login", async () => {
@@ -180,7 +351,6 @@ app.whenReady().then(() => {
     spawn("x-terminal-emulator", ["-e", "codex login"], {
       detached: true,
       stdio: "ignore",
-      shell: true,
     }).unref();
     const ok = await waitForCodexLoginAndFocus();
     if (!ok) {
