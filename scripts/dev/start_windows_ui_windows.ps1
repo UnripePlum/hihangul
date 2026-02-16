@@ -30,6 +30,16 @@ if (-not (Test-Path "node_modules")) {
   }
 }
 
+Write-Host "[start] checking lucide-react..."
+& npm.cmd ls lucide-react --depth=0 *> $null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "[start] lucide-react missing. installing..."
+  & npm.cmd install lucide-react
+  if ($LASTEXITCODE -ne 0) {
+    throw "lucide-react install failed with code $LASTEXITCODE"
+  }
+}
+
 Write-Host "[start] starting dev:win-vm"
 & npm.cmd run dev:win-vm
 exit $LASTEXITCODE

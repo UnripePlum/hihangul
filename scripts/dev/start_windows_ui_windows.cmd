@@ -40,6 +40,17 @@ if not exist "node_modules" (
   )
 )
 
+echo [start] checking lucide-react...
+call npm.cmd ls lucide-react --depth=0 >nul 2>nul
+if errorlevel 1 (
+  echo [start] lucide-react missing. installing...
+  call npm.cmd install lucide-react
+  if errorlevel 1 (
+    echo [start] ERROR: lucide-react install failed
+    exit /b 1
+  )
+)
+
 echo [start] starting dev:win-vm
 call npm.cmd run dev:win-vm
 exit /b %ERRORLEVEL%

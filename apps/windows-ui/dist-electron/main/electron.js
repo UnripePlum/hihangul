@@ -75,7 +75,13 @@ function isCodexLoggedIn() {
         return false;
     }
     const output = `${status.stdout || ""}\n${status.stderr || ""}`.toLowerCase();
-    return output.includes("logged in");
+    // Avoid false positives from phrases like "not logged in".
+    const hasNegativeSignal = /\bnot\s+logged\s+in\b|\blogged\s*out\b|\blogin\s+required\b|\bplease\s+log\s*in\b|\bunauthenticated\b/.test(output);
+    if (hasNegativeSignal) {
+        return false;
+    }
+    const hasPositiveSignal = /\blogged\s+in\b|\bauthenticated\b|\bactive\s+account\b/.test(output);
+    return hasPositiveSignal;
 }
 async function waitForCodexLoginAndFocus(timeoutMs = 240000, intervalMs = 2000) {
     const startedAt = Date.now();
