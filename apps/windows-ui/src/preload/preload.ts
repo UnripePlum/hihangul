@@ -23,7 +23,29 @@ const api = {
   ) as Promise<{
     ok: boolean;
     message: string;
-  }>
+  }>,
+  getHostUser: () => ipcRenderer.invoke("system:get-host-user") as Promise<{
+    ok: boolean;
+    username: string;
+    message?: string;
+  }>,
+  getAppVersion: () => ipcRenderer.invoke("system:get-app-version") as Promise<{
+    ok: boolean;
+    version: string;
+    message?: string;
+  }>,
+  loadSessions: () => ipcRenderer.invoke("session:load") as Promise<{
+    ok: boolean;
+    sessions: unknown[];
+    activeSessionId: string;
+  }>,
+  saveSessions: (payload: { sessions: unknown[]; activeSessionId: string }) => ipcRenderer.invoke(
+    "session:save",
+    payload,
+  ) as Promise<{
+    ok: boolean;
+    message?: string;
+  }>,
 };
 
 contextBridge.exposeInMainWorld("hihangul", api);

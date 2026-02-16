@@ -21,6 +21,25 @@ declare global {
         ok: boolean;
         message: string;
       }>;
+      getHostUser: () => Promise<{
+        ok: boolean;
+        username: string;
+        message?: string;
+      }>;
+      getAppVersion: () => Promise<{
+        ok: boolean;
+        version: string;
+        message?: string;
+      }>;
+      loadSessions: () => Promise<{
+        ok: boolean;
+        sessions: unknown[];
+        activeSessionId: string;
+      }>;
+      saveSessions: (payload: { sessions: unknown[]; activeSessionId: string }) => Promise<{
+        ok: boolean;
+        message?: string;
+      }>;
     };
   }
 }

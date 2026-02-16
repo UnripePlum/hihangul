@@ -5,22 +5,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const node_child_process_1 = require("node:child_process");
+const promises_1 = __importDefault(require("node:fs/promises"));
+const node_os_1 = __importDefault(require("node:os"));
 const node_path_1 = __importDefault(require("node:path"));
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 let mainWindow = null;
-// Parallels Windows VM compatibility and remote debugging settings.
+const SESSION_STORE_DIR = "session-store";
+const SESSION_STORE_FILE = "sessions.json";
+const SESSION_AUDIT_FILE = "session-events.jsonl";
+const ENABLE_REMOTE_DEBUG = isDev && process.env.HIHANGUL_ENABLE_REMOTE_DEBUGGING === "1";
+// VM compatibility.
 electron_1.app.disableHardwareAcceleration();
-electron_1.app.commandLine.appendSwitch("no-sandbox");
-electron_1.app.commandLine.appendSwitch("disable-gpu-sandbox");
-electron_1.app.commandLine.appendSwitch("remote-debugging-port", "9222");
-electron_1.app.commandLine.appendSwitch("remote-debugging-address", "0.0.0.0");
-electron_1.app.commandLine.appendSwitch("remote-allow-origins", "*");
+if (ENABLE_REMOTE_DEBUG) {
+    electron_1.app.commandLine.appendSwitch("remote-debugging-port", "9222");
+    electron_1.app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+}
 function hasCommand(command) {
     if (process.platform === "win32") {
-        const res = (0, node_child_process_1.spawnSync)("where", [command], { shell: true, stdio: "ignore" });
+        const res = (0, node_child_process_1.spawnSync)("where.exe", [command], { stdio: "ignore" });
         return res.status === 0;
     }
-    const res = (0, node_child_process_1.spawnSync)("command", ["-v", command], { shell: true, stdio: "ignore" });
+    const res = (0, node_child_process_1.spawnSync)("which", [command], { stdio: "ignore" });
     return res.status === 0;
 }
 function ensureProviderCli(provider) {
@@ -31,7 +36,6 @@ function ensureProviderCli(provider) {
     }
     const installer = process.platform === "win32" ? "npm.cmd" : "npm";
     const install = (0, node_child_process_1.spawnSync)(installer, ["install", "-g", packageName], {
-        shell: true,
         stdio: "pipe",
         encoding: "utf-8",
     });
@@ -67,7 +71,6 @@ function focusMainWindow() {
 }
 function isCodexLoggedIn() {
     const status = (0, node_child_process_1.spawnSync)("codex", ["login", "status"], {
-        shell: true,
         stdio: "pipe",
         encoding: "utf-8",
     });
@@ -101,18 +104,106 @@ function createMainWindow() {
         webPreferences: {
             preload: node_path_1.default.join(__dirname, "../preload/preload.js"),
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            sandbox: true,
+            webSecurity: true,
         }
     });
     mainWindow.on("closed", () => {
         mainWindow = null;
     });
+    mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    mainWindow.webContents.on("will-navigate", (event) => {
+        event.preventDefault();
+    });
+    if (!isDev) {
+        const csp = "default-src 'self'; " +
+            "script-src 'self' https://cdn.tailwindcss.com; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data:; " +
+            "font-src 'self' data:; " +
+            "connect-src 'self' https://cdn.tailwindcss.com; " +
+            "object-src 'none'; " +
+            "base-uri 'self'; " +
+            "frame-ancestors 'none'";
+        mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+            callback({
+                responseHeaders: {
+                    ...details.responseHeaders,
+                    "Content-Security-Policy": [csp],
+                },
+            });
+        });
+    }
     if (isDev) {
         mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
         mainWindow.webContents.openDevTools({ mode: "detach" });
     }
     else {
         mainWindow.loadFile(node_path_1.default.join(electron_1.app.getAppPath(), "dist/index.html"));
+    }
+}
+function getSessionStorePaths() {
+    const dir = node_path_1.default.join(electron_1.app.getPath("userData"), SESSION_STORE_DIR);
+    return {
+        dir,
+        dataFile: node_path_1.default.join(dir, SESSION_STORE_FILE),
+        auditFile: node_path_1.default.join(dir, SESSION_AUDIT_FILE),
+    };
+}
+function sanitizeText(value, maxLen) {
+    if (typeof value !== "string")
+        return "";
+    const trimmed = value.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "");
+    return trimmed.slice(0, maxLen);
+}
+function sanitizeSessionStore(input) {
+    const src = (input ?? {});
+    const sessionsRaw = Array.isArray(src.sessions) ? src.sessions : [];
+    const sessions = sessionsRaw.slice(0, 200).map((item, index) => {
+        const session = (item ?? {});
+        const id = sanitizeText(session.id, 128) || `session-${Date.now()}-${index}`;
+        const title = sanitizeText(session.title, 120) || "새 세션";
+        const updatedAt = typeof session.updatedAt === "number" ? session.updatedAt : Date.now();
+        const messagesRaw = Array.isArray(session.messages) ? session.messages : [];
+        const messages = messagesRaw.slice(0, 500).map((msg, msgIndex) => {
+            const m = (msg ?? {});
+            const role = m.role === "user" || m.role === "assistant" || m.role === "system" ? m.role : "assistant";
+            return {
+                id: sanitizeText(m.id, 128) || `msg-${Date.now()}-${msgIndex}`,
+                role,
+                content: sanitizeText(m.content, 4000),
+            };
+        });
+        return { id, title, updatedAt, messages };
+    });
+    const activeSessionId = sanitizeText(src.activeSessionId, 128);
+    return { sessions, activeSessionId };
+}
+function encodeSessionPayload(payload) {
+    if (!electron_1.safeStorage.isEncryptionAvailable()) {
+        return payload;
+    }
+    const encrypted = electron_1.safeStorage.encryptString(payload);
+    return JSON.stringify({
+        encoding: "safeStorage+base64",
+        data: encrypted.toString("base64"),
+    });
+}
+function decodeSessionPayload(raw) {
+    try {
+        const wrapped = JSON.parse(raw);
+        if (wrapped?.encoding === "safeStorage+base64" && typeof wrapped.data === "string") {
+            if (!electron_1.safeStorage.isEncryptionAvailable()) {
+                throw new Error("Encrypted session exists but safeStorage is unavailable.");
+            }
+            const buf = Buffer.from(wrapped.data, "base64");
+            return electron_1.safeStorage.decryptString(buf);
+        }
+        return raw;
+    }
+    catch {
+        return raw;
     }
 }
 electron_1.app.whenReady().then(() => {
@@ -124,6 +215,74 @@ electron_1.app.whenReady().then(() => {
             platform: process.platform,
             now: new Date().toISOString()
         };
+    });
+    electron_1.ipcMain.handle("session:load", async () => {
+        try {
+            const { dataFile } = getSessionStorePaths();
+            const raw = await promises_1.default.readFile(dataFile, "utf-8");
+            const decoded = decodeSessionPayload(raw);
+            const parsed = JSON.parse(decoded);
+            const sanitized = sanitizeSessionStore(parsed);
+            return { ok: true, ...sanitized };
+        }
+        catch {
+            return { ok: true, sessions: [], activeSessionId: "" };
+        }
+    });
+    electron_1.ipcMain.handle("session:save", async (_event, payload) => {
+        try {
+            const { dir, dataFile, auditFile } = getSessionStorePaths();
+            const sanitized = sanitizeSessionStore(payload);
+            await promises_1.default.mkdir(dir, { recursive: true });
+            const tmpFile = `${dataFile}.tmp`;
+            const serialized = JSON.stringify(sanitized, null, 2);
+            const encoded = encodeSessionPayload(serialized);
+            await promises_1.default.writeFile(tmpFile, encoded, { encoding: "utf-8", mode: 0o600 });
+            await promises_1.default.rename(tmpFile, dataFile);
+            const audit = {
+                ts: new Date().toISOString(),
+                event: "session_save",
+                sessions: sanitized.sessions.length,
+                activeSessionId: sanitized.activeSessionId,
+            };
+            await promises_1.default.appendFile(auditFile, `${JSON.stringify(audit)}\n`, { encoding: "utf-8", mode: 0o600 });
+            return { ok: true };
+        }
+        catch (error) {
+            return { ok: false, message: error.message };
+        }
+    });
+    electron_1.ipcMain.handle("system:get-host-user", async () => {
+        try {
+            const info = node_os_1.default.userInfo();
+            const username = info.username || process.env.USERNAME || process.env.USER || "User";
+            return {
+                ok: true,
+                username,
+            };
+        }
+        catch (error) {
+            return {
+                ok: false,
+                username: process.env.USERNAME || process.env.USER || "User",
+                message: error.message,
+            };
+        }
+    });
+    electron_1.ipcMain.handle("system:get-app-version", async () => {
+        try {
+            return {
+                ok: true,
+                version: electron_1.app.getVersion(),
+            };
+        }
+        catch (error) {
+            return {
+                ok: false,
+                version: "0.0.0",
+                message: error.message,
+            };
+        }
     });
     electron_1.ipcMain.handle("auth:codex-login", async () => {
         if (!hasCommand("codex")) {
@@ -165,7 +324,6 @@ electron_1.app.whenReady().then(() => {
         (0, node_child_process_1.spawn)("x-terminal-emulator", ["-e", "codex login"], {
             detached: true,
             stdio: "ignore",
-            shell: true,
         }).unref();
         const ok = await waitForCodexLoginAndFocus();
         if (!ok) {
