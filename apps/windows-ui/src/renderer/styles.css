@@ -9,3 +9,31 @@ body,
 * {
   box-sizing: border-box;
 }
+
+/* mac-like scrollbar */
+.hihangul-tailwind-ui * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+}
+
+.hihangul-tailwind-ui *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.hihangul-tailwind-ui *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hihangul-tailwind-ui *::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.hihangul-tailwind-ui *::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}

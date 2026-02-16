@@ -84,7 +84,19 @@ if not exist "%PY_EXE%" (
   exit /b 1
 )
 
-if not exist ".venv\.deps-ok" (
+set "REQ_HASH="
+for /f "delims=" %%H in ('certutil -hashfile requirements.txt SHA256 ^| findstr /R /I "^[0-9A-F][0-9A-F]"') do (
+  if not defined REQ_HASH set "REQ_HASH=%%H"
+)
+set "REQ_HASH=%REQ_HASH: =%"
+set "OLD_REQ_HASH="
+if exist ".venv\.deps-hash" set /p OLD_REQ_HASH=<".venv\.deps-hash"
+set "INSTALL_DEPS=0"
+if not exist ".venv\.deps-ok" set "INSTALL_DEPS=1"
+if "%REQ_HASH%"=="" set "INSTALL_DEPS=1"
+if /I not "%REQ_HASH%"=="%OLD_REQ_HASH%" set "INSTALL_DEPS=1"
+
+if "%INSTALL_DEPS%"=="1" (
   echo [windows-agent] installing requirements...
   "%PY_EXE%" -m pip install -r requirements.txt
   if errorlevel 1 (
@@ -92,5 +104,6 @@ if not exist ".venv\.deps-ok" (
     exit /b 1
   )
   echo ok> .venv\.deps-ok
+  > ".venv\.deps-hash" echo %REQ_HASH%
 )
 "%PY_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload

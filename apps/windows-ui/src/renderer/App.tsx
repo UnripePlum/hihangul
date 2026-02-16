@@ -30,7 +30,17 @@ import {
 type Provider = 'claude' | 'codex';
 
 type ChatMessage = { id: string; sender: 'ai' | 'user'; text: string; timestamp: string };
-type WorkspaceFile = { id: string; name: string; size: string; type: string; date: string };
+type WorkspaceFile = { id: string; name: string; size: string; type: string; date: string; mime?: string };
+type RichRun = { text: string; font_size_px: number; bold: boolean; font_family?: string };
+type RichBlock =
+  | { type: 'paragraph'; runs: RichRun[] }
+  | { type: 'table'; rows: string[][] };
+type FilePreview =
+  | { kind: 'none'; note: string }
+  | { kind: 'text'; content: string; truncated: boolean }
+  | { kind: 'rich'; blocks: RichBlock[]; content: string; truncated: boolean }
+  | { kind: 'image'; url: string }
+  | { kind: 'pdf'; url: string };
 type UiSession = {
   id: string;
   title: string;
@@ -75,6 +85,9 @@ function logUiError(scope: string, error: unknown, ctx?: Record<string, unknown>
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
+
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml']);
+const MAX_TEXT_PREVIEW_LEN = 50000;
 
 function laneNumberFromSessionId(sessionId: string): number {
   if (!sessionId) return 100;
@@ -365,7 +378,7 @@ const PanelTab = ({ label, icon: Icon, active, onClick, badge }: any) => (
   </button>
 );
 
-const FileListContent = ({ files, activeFileId, onSelect, onUploadClick }: any) => {
+const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading }: any) => {
   const getFileIcon = (type: string) => {
     switch (type) {
       case 'xlsx':
@@ -382,11 +395,12 @@ const FileListContent = ({ files, activeFileId, onSelect, onUploadClick }: any) 
       <div className="p-4 bg-white border-b border-slate-200">
         <button
           onClick={onUploadClick}
-          className="w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium flex items-center justify-center gap-2"
+          className="w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          disabled={loading}
           type="button"
         >
-          <UploadCloud className="w-4 h-4" />
-          Upload Files
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+          {loading ? '파일 처리 중...' : 'Upload Files'}
         </button>
       </div>
 
@@ -441,6 +455,8 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [visibleRecentCount, setVisibleRecentCount] = useState(4);
   const [storeReady, setStoreReady] = useState(false);
+  const [isFileLoading, setIsFileLoading] = useState(false);
+  const [filePreviewById, setFilePreviewById] = useState<Record<string, FilePreview>>({});
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -465,6 +481,16 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     window.addEventListener('resize', computeVisibleRecent);
     return () => window.removeEventListener('resize', computeVisibleRecent);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(filePreviewById).forEach((preview) => {
+        if ((preview.kind === 'image' || preview.kind === 'pdf') && preview.url.startsWith('blob:')) {
+          URL.revokeObjectURL(preview.url);
+        }
+      });
+    };
+  }, [filePreviewById]);
 
   useEffect(() => {
     let cancelled = false;
@@ -598,6 +624,83 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     }
   };
 
+  const getFileExt = (filename: string) => {
+    const dot = filename.lastIndexOf('.');
+    if (dot < 0) return '';
+    return filename.slice(dot + 1).toLowerCase();
+  };
+
+  const buildPreviewForFile = async (file: File): Promise<FilePreview> => {
+    const ext = getFileExt(file.name);
+    const mime = (file.type || '').toLowerCase();
+
+    if (mime.startsWith('image/')) {
+      return { kind: 'image', url: URL.createObjectURL(file) };
+    }
+    if (mime === 'application/pdf' || ext === 'pdf') {
+      return { kind: 'pdf', url: URL.createObjectURL(file) };
+    }
+    if (mime.startsWith('text/') || TEXT_EXTENSIONS.has(ext)) {
+      const raw = await file.text();
+      const truncated = raw.length > MAX_TEXT_PREVIEW_LEN;
+      return {
+        kind: 'text',
+        content: truncated ? raw.slice(0, MAX_TEXT_PREVIEW_LEN) : raw,
+        truncated,
+      };
+    }
+    if (ext === 'hwp' || ext === 'hwpx') {
+      try {
+        const form = new FormData();
+        form.append('file', file, file.name);
+        const pdfRes = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/render-pdf`, {
+          method: 'POST',
+          body: form,
+        });
+        if (pdfRes.ok) {
+          const pdfBlob = await pdfRes.blob();
+          return { kind: 'pdf', url: URL.createObjectURL(pdfBlob) };
+        }
+
+        const fallbackForm = new FormData();
+        fallbackForm.append('file', file, file.name);
+        const res = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/preview`, {
+          method: 'POST',
+          body: fallbackForm,
+        });
+        if (!res.ok) {
+          const detail = await pdfRes.text();
+          return { kind: 'none', note: `HWP 미리보기 생성 실패: ${detail || res.status}` };
+        }
+        const data = await res.json();
+        const preview = data?.preview;
+        if (preview?.kind === 'rich' && Array.isArray(preview.blocks)) {
+          return {
+            kind: 'rich',
+            blocks: preview.blocks,
+            content: typeof preview.content === 'string' ? preview.content : '',
+            truncated: !!preview.truncated,
+          };
+        }
+        if (preview?.kind === 'text' && typeof preview.content === 'string') {
+          return {
+            kind: 'text',
+            content: preview.content,
+            truncated: !!preview.truncated,
+          };
+        }
+        return { kind: 'none', note: 'HWP 미리보기 결과를 해석할 수 없습니다.' };
+      } catch (error) {
+        logUiError('file.preview.hwp', error, { file: file.name });
+        return { kind: 'none', note: 'HWP 미리보기 요청 실패: windows-agent 연결 상태를 확인하세요.' };
+      }
+    }
+    if (ext === 'xlsx' || ext === 'xls') {
+      return { kind: 'none', note: 'Excel 바이너리 파일은 표준 미리보기 대신 실행 기반 분석으로 확인합니다.' };
+    }
+    return { kind: 'none', note: '이 파일 형식은 현재 미리보기를 지원하지 않습니다.' };
+  };
+
   const handleGoHome = () => {
     setCurrentView('dashboard');
     setActiveSessionId(null);
@@ -637,10 +740,11 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     hiddenFileInputRef.current?.click();
   };
 
-  const handleFileChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
       const picked = Array.from(event.target.files ?? []);
       if (!picked.length || !activeSessionId) return;
+      setIsFileLoading(true);
 
       const mapped: WorkspaceFile[] = picked.map((file) => {
         const ext = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : 'other';
@@ -652,8 +756,16 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
           size,
           type: ext || 'other',
           date: 'Just now',
+          mime: file.type || 'application/octet-stream',
         };
       });
+
+      const previews = await Promise.all(picked.map((file) => buildPreviewForFile(file)));
+      const nextPreviewById: Record<string, FilePreview> = {};
+      mapped.forEach((f, idx) => {
+        nextPreviewById[f.id] = previews[idx];
+      });
+      setFilePreviewById((prev) => ({ ...prev, ...nextPreviewById }));
 
       updateActiveSession((session) => ({
         ...session,
@@ -665,6 +777,8 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
       event.target.value = '';
     } catch (error) {
       logUiError('file.upload', error);
+    } finally {
+      setIsFileLoading(false);
     }
   };
 
@@ -685,6 +799,7 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
   };
 
   const laneNumber = laneNumberFromSessionId(activeSessionId ?? '');
+  const activeFilePreview = activeFile ? filePreviewById[activeFile.id] : undefined;
 
   return (
     <div className="hihangul-tailwind-ui flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
@@ -886,6 +1001,7 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
                   activeFileId={activeFile?.id}
                   onSelect={handleFileSelect}
                   onUploadClick={openFileDialog}
+                  loading={isFileLoading}
                 />
               )}
             </div>
@@ -912,9 +1028,9 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
                 </div>
               </div>
             ) : (
-              <div className="flex-1 bg-slate-100 p-8 overflow-y-auto flex justify-center animate-in fade-in duration-300">
-                <div className="w-full max-w-4xl bg-white shadow-xl min-h-[1000px] relative transition-all">
-                  <div className="h-9 bg-slate-200 flex items-center px-4 gap-2 border-b border-slate-300">
+              <div className="flex-1 bg-white overflow-hidden flex justify-center animate-in fade-in duration-300">
+                <div className="w-full max-w-4xl h-full min-h-0 relative transition-all flex flex-col">
+                  <div className="h-9 bg-slate-200 flex items-center px-4 gap-2 border-b border-slate-300 flex-shrink-0">
                     <div className="flex gap-2 mr-4">
                       <div className="w-3 h-3 rounded-full bg-red-400" />
                       <div className="w-3 h-3 rounded-full bg-yellow-400" />
@@ -924,60 +1040,102 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
                     <span className="text-xs text-slate-600 font-mono font-medium flex-1 text-center">{activeFile ? activeFile.name : 'No file selected'}</span>
                     <div className="text-[10px] text-slate-500">100%</div>
                   </div>
+                  <div className={`${activeFilePreview?.kind === 'pdf' ? 'p-0 overflow-hidden' : 'p-8 overflow-auto'} text-slate-800 flex-1 min-h-0`}>
 
-                  <div className="p-16 font-serif text-slate-800 space-y-8">
-                    <h1 className="text-4xl font-bold text-center mb-12">주간 업무 보고서</h1>
-
-                    <div className="flex justify-between text-base mb-12 text-slate-600 border-b border-slate-800 pb-2">
-                      <span>작성자: {hostUserName}</span>
-                      <span>날짜: {new Date().toLocaleDateString('ko-KR')}</span>
-                    </div>
-
-                    <div className="space-y-4">
-                      <h2 className="text-xl font-bold border-l-4 border-slate-800 pl-3 mb-6">1. 금주 주요 업무 실적</h2>
-                      <p className="text-base leading-8 text-justify">
-                        본 보고서는 금주 진행된 주요 프로젝트의 진행 상황과 차주 계획을 기술한다. 특히 AI 에이전트 도입을 위한 <span className={diffMode ? 'bg-green-100 text-green-800 px-1 rounded font-bold' : ''}>기반 환경 구축</span>이 완료되었다.
-                      </p>
-                    </div>
-
-                    <div className="mt-12">
-                      <h3 className="text-lg font-bold mb-4">2. 세부 진행 현황</h3>
-                      <div className={`border-2 ${diffMode ? 'border-blue-600 relative ring-4 ring-blue-50 rounded-lg' : 'border-slate-800'}`}>
-                        {diffMode && (
-                          <div className="absolute -top-3 -right-3 bg-blue-600 text-white text-[10px] px-3 py-1 rounded-full shadow-lg z-10 font-bold flex items-center gap-1">
-                            <Sparkles className="w-3 h-3" />
-                            Modified by AI
-                          </div>
-                        )}
-                        <table className="w-full text-base text-center">
-                          <thead className="bg-slate-100 font-bold border-b-2 border-slate-800">
-                            <tr>
-                              <td className="p-3 border-r border-slate-300 w-1/4">구분</td>
-                              <td className="p-3 border-r border-slate-300 w-1/2">내용</td>
-                              <td className="p-3">비고</td>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr className="border-b border-slate-200 hover:bg-slate-50">
-                              <td className="p-3 border-r border-slate-200 font-medium">Frontend</td>
-                              <td className="p-3 border-r border-slate-200 text-left pl-6">UI 컴포넌트 개발 및 최적화</td>
-                              <td className="p-3 text-slate-500">완료</td>
-                            </tr>
-                            <tr className="hover:bg-slate-50">
-                              <td className="p-3 border-r border-slate-200 font-medium">Backend</td>
-                              <td className="p-3 border-r border-slate-200 text-left pl-6">{diffMode ? <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded">API 연동 테스트 (Pass)</span> : 'API 개발'}</td>
-                              <td className="p-3 text-slate-500">진행중</td>
-                            </tr>
-                          </tbody>
-                        </table>
+                    {!activeFile ? (
+                      <div className="text-sm text-slate-500">미리볼 파일을 선택하세요.</div>
+                    ) : isFileLoading ? (
+                      <div className="bg-white p-10 flex flex-col items-center justify-center gap-3 min-h-[320px]">
+                        <Loader2 className="w-7 h-7 text-blue-600 animate-spin" />
+                        <p className="text-sm text-slate-600">문서 미리보기를 생성하고 있습니다...</p>
+                        <p className="text-xs text-slate-400">HWP/HWPX는 구조 분석에 시간이 조금 더 걸릴 수 있습니다.</p>
                       </div>
-                      {diffMode && (
-                        <div className="mt-3 text-sm text-blue-600 flex items-center gap-2 bg-blue-50 p-3 rounded-lg border border-blue-100">
-                          <CheckCircle className="w-4 h-4" />
-                          <span>테두리 스타일이 '투명선 제거' 및 '외곽선 굵게'로 변경되었습니다.</span>
+                    ) : activeFilePreview?.kind === 'image' ? (
+                      <div className="bg-white p-1">
+                        <img src={activeFilePreview.url} alt={activeFile.name} className="max-h-[720px] w-full object-contain rounded bg-white" />
+                      </div>
+                    ) : activeFilePreview?.kind === 'pdf' ? (
+                      <div className="bg-white overflow-hidden w-full h-full">
+                        <iframe
+                          title={activeFile.name}
+                          src={`${activeFilePreview.url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+                          className="w-full h-full border-0"
+                        />
+                      </div>
+                    ) : activeFilePreview?.kind === 'rich' ? (
+                      <div className="h-full min-h-[420px]">
+                        <div className="m-0 text-[15px] leading-8 whitespace-pre-wrap break-words font-serif text-slate-800 h-full overflow-auto bg-white">
+                          {activeFilePreview.blocks.map((block, blockIndex) => {
+                            if (block.type === 'table') {
+                              return (
+                                <div key={`tbl-${blockIndex}`} className="my-6 overflow-auto border border-slate-300">
+                                  <table className="w-full border-collapse text-[14px]">
+                                    <tbody>
+                                      {block.rows.map((row, rowIndex) => (
+                                        <tr key={`row-${rowIndex}`} className="border-b border-slate-200">
+                                          {row.map((cell, cellIndex) => (
+                                            <td key={`cell-${rowIndex}-${cellIndex}`} className="border-r border-slate-200 px-3 py-2 align-top">
+                                              {cell}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            }
+                            return (
+                              <p key={`p-${blockIndex}`} className="my-1">
+                                {block.runs.map((run, runIndex) => (
+                                  <span
+                                    key={`run-${blockIndex}-${runIndex}`}
+                                    style={{
+                                      fontSize: `${run.font_size_px}px`,
+                                      fontWeight: run.bold ? 700 : 400,
+                                      fontFamily: run.font_family || 'Malgun Gothic, Noto Sans KR, sans-serif',
+                                    }}
+                                  >
+                                    {run.text}{' '}
+                                  </span>
+                                ))}
+                              </p>
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
+                        {activeFilePreview.truncated ? (
+                          <div className="px-4 py-2 text-xs text-amber-700 bg-amber-50 border-t border-amber-200">
+                            미리보기 길이 제한으로 일부만 표시했습니다.
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : activeFilePreview?.kind === 'text' ? (
+                      <div className="h-full min-h-[420px]">
+                        <pre className="m-0 text-[15px] leading-8 whitespace-pre-wrap break-words font-serif text-slate-800 h-full overflow-auto bg-white">
+                          {activeFilePreview.content}
+                        </pre>
+                        {activeFilePreview.truncated ? (
+                          <div className="px-4 py-2 text-xs text-amber-700 bg-amber-50 border-t border-amber-200">
+                            미리보기 길이 제한으로 일부만 표시했습니다.
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50 p-5 text-sm text-slate-600">
+                        <p className="mb-3 font-medium text-slate-800">미리보기 불가 파일</p>
+                        <p>{activeFilePreview?.note ?? '파일 형식을 확인할 수 없습니다.'}</p>
+                        <p className="mt-3 text-xs text-slate-500">
+                          파일 형식: {activeFile.type.toUpperCase()} {activeFile.mime ? `(${activeFile.mime})` : ''}
+                        </p>
+                      </div>
+                    )}
+
+                    {diffMode ? (
+                      <div className="mt-3 text-sm text-blue-600 flex items-center gap-2 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                        <CheckCircle className="w-4 h-4" />
+                        <span>Diff 모드가 켜져 있습니다. 실행 결과 비교 시 강조 표시됩니다.</span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
