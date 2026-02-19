@@ -28,17 +28,16 @@ if "%PY_EXE%"=="" (
 if "%PY_EXE%"=="" (
   for /f "usebackq delims=" %%P in (`where python 2^>nul`) do (
     if exist "%%~P" (
-      set "PY_EXE=%%~P"
-      goto :py_found
+      echo "%%~P" | findstr /I "WindowsApps" >nul
+      if errorlevel 1 (
+        set "PY_EXE=%%~P"
+        goto :py_found
+      )
     )
   )
 )
 if "%PY_EXE%"=="" (
   for %%P in (
-    "%LocalAppData%\Programs\Python\Python313-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python312-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python311-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python310-arm64\python.exe"
     "%LocalAppData%\Programs\Python\Python313\python.exe"
     "%LocalAppData%\Programs\Python\Python312\python.exe"
     "%LocalAppData%\Programs\Python\Python311\python.exe"
@@ -47,6 +46,10 @@ if "%PY_EXE%"=="" (
     "C:\Python312\python.exe"
     "C:\Python311\python.exe"
     "C:\Python310\python.exe"
+    "%LocalAppData%\Programs\Python\Python313-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python312-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python311-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python310-arm64\python.exe"
   ) do (
     if exist %%~P (
       set "PY_EXE=%%~P"
@@ -66,6 +69,13 @@ if "%PY_EXE%"=="" (
 echo [windows-brain] python: %PY_EXE%
 
 set "VENV_PY=%APP_DIR%\.venv\Scripts\python.exe"
+if exist "%VENV_PY%" (
+  "%VENV_PY%" -V >nul 2>nul
+  if errorlevel 1 (
+    echo [windows-brain] broken .venv detected ^(invalid base python^). recreating...
+    rmdir /S /Q .venv
+  )
+)
 if not exist "%VENV_PY%" (
   if exist ".venv" (
     echo [windows-brain] broken .venv detected. recreating...

@@ -33,6 +33,6 @@ OpenAI account subscription and API credentials are separate systems. In practic
 
 - User selects provider (`Claude` / `Codex`)
 - Claude: set `Profile ID` + `Provider Token`
-- Codex: set `Auth Mode = codex_cli`, then run `codex --login` on the host running windows-brain
+- Codex: set `Auth Mode = codex_cli`, then run `codex login` on the host running windows-brain
 - Save profile
 - Run automation with selected provider/profile

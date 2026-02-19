@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from difflib import SequenceMatcher
 import io
 import re
 import zipfile
@@ -33,6 +35,132 @@ def _clean_xml_text(raw: str) -> str:
     text = text.replace("&nbsp;", " ").replace("&amp;", "&")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _normalize_match_text(raw: str) -> str:
+    text = raw.lower()
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[^0-9a-z가-힣 ]+", "", text)
+    return text
+
+
+def _block_plain_text(block: dict[str, object]) -> str:
+    if block.get("type") == "table":
+        rows = block.get("rows", [])
+        if isinstance(rows, list):
+            return "\n".join(" | ".join(str(c) for c in row) for row in rows if isinstance(row, list))
+        return ""
+    runs = block.get("runs", [])
+    if not isinstance(runs, list):
+        return ""
+    return " ".join(str(run.get("text", "")) for run in runs if isinstance(run, dict)).strip()
+
+
+def _extract_pdf_text_blocks(pdf_bytes: bytes) -> list[dict[str, object]]:
+    # Fast path: PyMuPDF (if available)
+    try:
+        import fitz  # type: ignore
+        blocks: list[dict[str, object]] = []
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            for page_index, page in enumerate(doc):
+                width = float(page.rect.width or 1.0)
+                height = float(page.rect.height or 1.0)
+                raw_blocks = page.get_text("blocks") or []
+                for item in raw_blocks:
+                    # x0, y0, x1, y1, text, block_no, block_type
+                    if len(item) < 5:
+                        continue
+                    x0, y0, x1, y1, text = item[:5]
+                    text_s = str(text or "").strip()
+                    if not text_s:
+                        continue
+                    blocks.append(
+                        {
+                            "page": page_index + 1,
+                            "x": max(0.0, min(1.0, float(x0) / width)),
+                            "y": max(0.0, min(1.0, float(y0) / height)),
+                            "w": max(0.0, min(1.0, float(x1 - x0) / width)),
+                            "h": max(0.0, min(1.0, float(y1 - y0) / height)),
+                            "text": text_s,
+                        }
+                    )
+        if blocks:
+            return blocks
+    except Exception:
+        pass
+
+    # Fallback path: pdfminer.six (pure-python, slower but broadly available)
+    try:
+        from pdfminer.high_level import extract_pages  # type: ignore
+        from pdfminer.layout import LTTextContainer  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Neither PyMuPDF nor pdfminer.six is available for precise layout mode") from exc
+
+    blocks: list[dict[str, object]] = []
+    for page_index, page_layout in enumerate(extract_pages(io.BytesIO(pdf_bytes))):
+        width = float(getattr(page_layout, "width", 1.0) or 1.0)
+        height = float(getattr(page_layout, "height", 1.0) or 1.0)
+        for element in page_layout:
+            if not isinstance(element, LTTextContainer):
+                continue
+            text_s = element.get_text().strip()
+            if not text_s:
+                continue
+            x0, y0, x1, y1 = element.bbox
+            # pdfminer uses bottom-left origin; convert to top-left normalized y
+            top = max(0.0, min(1.0, 1.0 - (float(y1) / height)))
+            blocks.append(
+                {
+                    "page": page_index + 1,
+                    "x": max(0.0, min(1.0, float(x0) / width)),
+                    "y": top,
+                    "w": max(0.0, min(1.0, float(x1 - x0) / width)),
+                    "h": max(0.0, min(1.0, float(y1 - y0) / height)),
+                    "text": text_s,
+                }
+            )
+    return blocks
+
+
+def _inject_precise_bboxes(blocks: list[dict[str, object]], pdf_blocks: list[dict[str, object]]) -> int:
+    if not blocks or not pdf_blocks:
+        return 0
+    assigned = 0
+    cursor = 0
+    for block in blocks:
+        target = _normalize_match_text(_block_plain_text(block))
+        if not target:
+            continue
+        best_idx = -1
+        best_score = 0.0
+        # Keep locality to reduce wrong matches.
+        for idx in range(cursor, min(len(pdf_blocks), cursor + 24)):
+            cand = _normalize_match_text(str(pdf_blocks[idx].get("text", "")))
+            if not cand:
+                continue
+            if target in cand or cand in target:
+                score = 1.0
+            else:
+                score = SequenceMatcher(None, target[:300], cand[:300]).ratio()
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_idx < 0 or best_score < 0.45:
+            continue
+        matched = pdf_blocks[best_idx]
+        block["bbox"] = {
+            "page": int(matched["page"]),
+            "x": round(float(matched["x"]), 4),
+            "y": round(float(matched["y"]), 4),
+            "w": round(float(matched["w"]), 4),
+            "h": round(float(matched["h"]), 4),
+            "unit": "norm",
+            "source": "pdf_exact",
+            "score": round(best_score, 3),
+        }
+        assigned += 1
+        cursor = best_idx + 1
+    return assigned
 
 
 def _parse_hwpx_face_names(header_xml: str) -> dict[str, str]:
@@ -86,7 +214,13 @@ def _parse_hwpx_char_styles(header_xml: str) -> dict[str, dict[str, object]]:
     return styles
 
 
-def _extract_hwpx_rich(file_bytes: bytes) -> dict[str, object]:
+def _extract_hwpx_rich(
+    file_bytes: bytes,
+    *,
+    layout_mode: str = "approx",
+    render_pdf: Callable[[str, bytes], bytes] | None = None,
+    file_name: str = "document.hwpx",
+) -> dict[str, object]:
     blocks: list[dict[str, object]] = []
     text_accum: list[str] = []
     char_styles: dict[str, dict[str, object]] = {}
@@ -193,11 +327,61 @@ def _extract_hwpx_rich(file_bytes: bytes) -> dict[str, object]:
     if truncated and blocks:
         # blocks가 매우 커질 때 렌더링 보호
         blocks = blocks[:120]
+
+    # Default: approximate normalized layout anchors for downstream overlay/highlight rendering.
+    # Coordinate space: page in 1-based index, x/y/w/h in [0, 1].
+    def estimate_block_height(block: dict[str, object]) -> float:
+        if block.get("type") == "table":
+            rows = block.get("rows", [])
+            row_count = len(rows) if isinstance(rows, list) else 1
+            return min(0.24, max(0.05, 0.03 * max(1, row_count)))
+        runs = block.get("runs", [])
+        if not isinstance(runs, list) or not runs:
+            return 0.045
+        text_len = sum(len(str(run.get("text", ""))) for run in runs if isinstance(run, dict))
+        estimated_lines = max(1, min(8, text_len // 26 + 1))
+        return min(0.22, max(0.04, 0.028 * estimated_lines))
+
+    layout_version = "approx-v1"
+    precise_assigned = 0
+    if layout_mode == "precise" and render_pdf is not None:
+        try:
+            pdf_bytes = render_pdf(file_name, file_bytes)
+            pdf_blocks = _extract_pdf_text_blocks(pdf_bytes)
+            precise_assigned = _inject_precise_bboxes(blocks, pdf_blocks)
+            if precise_assigned > 0:
+                layout_version = "pdf-exact-v1"
+        except Exception:
+            # fallback to approximate below
+            precise_assigned = 0
+
+    if precise_assigned == 0:
+        page = 1
+        cursor_y = 0.08
+        for block in blocks:
+            h = estimate_block_height(block)
+            if cursor_y + h > 0.94:
+                page += 1
+                cursor_y = 0.08
+            block["bbox"] = {
+                "page": page,
+                "x": 0.08,
+                "y": round(cursor_y, 4),
+                "w": 0.84,
+                "h": round(h, 4),
+                "unit": "norm",
+                "source": "approx",
+            }
+            cursor_y += h + 0.014
+
     return {
         "kind": "rich",
         "blocks": blocks,
         "content": content,
         "truncated": truncated,
+        "layout_version": layout_version,
+        "layout_mode": layout_mode,
+        "precise_bbox_count": precise_assigned,
         "source": "hwpx",
     }
 
@@ -268,7 +452,13 @@ def _extract_hwp_text(file_bytes: bytes) -> str:
     return "\n".join(texts)
 
 
-def build_document_preview(file_name: str, file_bytes: bytes) -> dict[str, object]:
+def build_document_preview(
+    file_name: str,
+    file_bytes: bytes,
+    *,
+    layout_mode: str = "approx",
+    render_pdf: Callable[[str, bytes], bytes] | None = None,
+) -> dict[str, object]:
     if not file_name:
         raise ValueError("file_name is required")
     if not file_bytes:
@@ -276,7 +466,12 @@ def build_document_preview(file_name: str, file_bytes: bytes) -> dict[str, objec
 
     ext = file_name.lower().rsplit(".", 1)[-1] if "." in file_name else ""
     if ext == "hwpx":
-        return _extract_hwpx_rich(file_bytes)
+        return _extract_hwpx_rich(
+            file_bytes,
+            layout_mode=layout_mode,
+            render_pdf=render_pdf,
+            file_name=file_name,
+        )
     elif ext == "hwp":
         raw = _extract_hwp_text(file_bytes)
     else:

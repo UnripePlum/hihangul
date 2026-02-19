@@ -30,17 +30,30 @@ import {
 type Provider = 'claude' | 'codex';
 
 type ChatMessage = { id: string; sender: 'ai' | 'user'; text: string; timestamp: string };
-type WorkspaceFile = { id: string; name: string; size: string; type: string; date: string; mime?: string };
+type WorkspaceFile = {
+  id: string;
+  name: string;
+  size: string;
+  type: string;
+  date: string;
+  mime?: string;
+  uploadedAt?: number;
+  lineageKey?: string;
+  parentFileId?: string | null;
+  compareText?: string;
+  compareLineTokens?: string[];
+};
 type RichRun = { text: string; font_size_px: number; bold: boolean; font_family?: string };
+type BlockBBox = { page: number; x: number; y: number; w: number; h: number; unit?: string; source?: string };
 type RichBlock =
-  | { type: 'paragraph'; runs: RichRun[] }
-  | { type: 'table'; rows: string[][] };
+  | { type: 'paragraph'; runs: RichRun[]; bbox?: BlockBBox }
+  | { type: 'table'; rows: string[][]; bbox?: BlockBBox };
 type FilePreview =
   | { kind: 'none'; note: string }
-  | { kind: 'text'; content: string; truncated: boolean }
-  | { kind: 'rich'; blocks: RichBlock[]; content: string; truncated: boolean }
+  | { kind: 'text'; content: string; truncated: boolean; compareText?: string; compareLineTokens?: string[] }
+  | { kind: 'rich'; blocks: RichBlock[]; content: string; truncated: boolean; compareText?: string; compareLineTokens?: string[] }
   | { kind: 'image'; url: string }
-  | { kind: 'pdf'; url: string };
+  | { kind: 'pdf'; url: string; compareText?: string; compareLineTokens?: string[]; richBlocks?: RichBlock[] };
 type UiSession = {
   id: string;
   title: string;
@@ -52,6 +65,16 @@ type UiSession = {
 };
 
 type SessionContextMenu = { x: number; y: number; sessionId: string };
+type DiffPair = {
+  originalFile: WorkspaceFile;
+  resultFile: WorkspaceFile;
+  originalPreview: FilePreview;
+  resultPreview: FilePreview;
+  lineageKey: string;
+  relation: 'parent-child';
+};
+type ComparableLine = { text: string; styleKey: string };
+type PdfHighlightBox = { page: number; x: number; y: number; w: number; h: number };
 
 const MOCK_LAUNCHER_APPS = [
   { id: 'app1', title: '표 테두리 자동화', description: '모든 표 투명선 제거 및 굵은 테두리 적용', usageCount: 128, type: 'hwp' },
@@ -88,6 +111,276 @@ function makeId(prefix: string): string {
 
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml']);
 const MAX_TEXT_PREVIEW_LEN = 50000;
+
+function normalizeFileStem(fileName: string): string {
+  const stem = fileName.replace(/\.[^.]+$/, '').toLowerCase();
+  return stem
+    .replace(/(원본|결과|수정본|orig(?:inal)?|source|before|input|result|output|after|modified|final|copy)/g, '')
+    .replace(/[-_ ]?v\d+/g, '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/[^a-z0-9가-힣]/g, '');
+}
+
+function isHwpFamily(file: WorkspaceFile): boolean {
+  return file.type === 'hwp' || file.type === 'hwpx';
+}
+
+function buildLineageKey(fileName: string): string {
+  const normalized = normalizeFileStem(fileName);
+  if (normalized) return normalized;
+  return fileName.replace(/\.[^.]+$/, '').toLowerCase();
+}
+
+function extractComparableText(preview: FilePreview | undefined): string | null {
+  if (!preview) return null;
+  if ('compareText' in preview && typeof preview.compareText === 'string') return preview.compareText;
+  if (preview.kind === 'text') return preview.content || '';
+  if (preview.kind === 'rich') return preview.content || '';
+  return null;
+}
+
+function splitLines(text: string): ComparableLine[] {
+  return text.replace(/\r\n/g, '\n').split('\n').map((line) => ({ text: line, styleKey: '' }));
+}
+
+function lineStyleKeyFromRun(run: RichRun): string {
+  return `${run.font_size_px || 0}|${run.bold ? 1 : 0}|${(run.font_family || '').toLowerCase()}`;
+}
+
+function richBlocksToComparableLines(blocks: RichBlock[]): ComparableLine[] {
+  const lines: ComparableLine[] = [];
+  let currentText = '';
+  let currentStyle = '';
+  const flush = () => {
+    lines.push({ text: currentText, styleKey: currentStyle });
+    currentText = '';
+    currentStyle = '';
+  };
+
+  for (const block of blocks) {
+    if (block.type === 'table') {
+      if (currentText || currentStyle) flush();
+      for (const row of block.rows) {
+        lines.push({ text: row.join(' | '), styleKey: 'table' });
+      }
+      continue;
+    }
+
+    for (const run of block.runs) {
+      const parts = (run.text || '').replace(/\r\n/g, '\n').split('\n');
+      const key = lineStyleKeyFromRun(run);
+      for (let i = 0; i < parts.length; i += 1) {
+        const part = parts[i];
+        if (part.length > 0) {
+          currentText += part;
+          currentStyle += `${key};`;
+        }
+        if (i < parts.length - 1) flush();
+      }
+      currentText += ' ';
+    }
+    flush();
+  }
+
+  if (!lines.length) lines.push({ text: '', styleKey: '' });
+  return lines;
+}
+
+function extractComparableLines(preview: FilePreview | undefined): ComparableLine[] | null {
+  if (!preview) return null;
+  if ('compareLineTokens' in preview && Array.isArray(preview.compareLineTokens) && preview.compareLineTokens.length > 0) {
+    return preview.compareLineTokens.map((token) => {
+      const [text, styleKey] = token.split('\u241F');
+      return { text: text ?? '', styleKey: styleKey ?? '' };
+    });
+  }
+  if (preview.kind === 'rich') return richBlocksToComparableLines(preview.blocks);
+  const text = extractComparableText(preview);
+  if (text === null) return null;
+  return splitLines(text);
+}
+
+function parseComparableLinesFromTokens(tokens: string[] | undefined, fallbackText: string | undefined): ComparableLine[] | null {
+  if (Array.isArray(tokens) && tokens.length > 0) {
+    return tokens.map((token) => {
+      const [text, styleKey] = token.split('\u241F');
+      return { text: text ?? '', styleKey: styleKey ?? '' };
+    });
+  }
+  if (typeof fallbackText === 'string') {
+    return splitLines(fallbackText);
+  }
+  return null;
+}
+
+function buildComparablePayload(preview: FilePreview | undefined): { compareText: string; compareLineTokens: string[] } | null {
+  const lines = extractComparableLines(preview);
+  if (!lines) return null;
+  const compareText = lines.map((line) => line.text).join('\n');
+  const compareLineTokens = lines.map((line) => `${line.text}\u241F${line.styleKey}`);
+  return { compareText, compareLineTokens };
+}
+
+function extractRichBlocks(preview: FilePreview | undefined): RichBlock[] | null {
+  if (!preview) return null;
+  if (preview.kind === 'rich') return preview.blocks;
+  if (preview.kind === 'pdf' && Array.isArray(preview.richBlocks)) return preview.richBlocks;
+  return null;
+}
+
+function blockSignature(block: RichBlock): string {
+  if (block.type === 'table') {
+    return `table:${block.rows.map((row) => row.join('|')).join('||')}`;
+  }
+  return `paragraph:${block.runs.map((run) => `${run.text}@@${lineStyleKeyFromRun(run)}`).join('##')}`;
+}
+
+function changedLinesByLcs(originalLines: ComparableLine[], resultLines: ComparableLine[]): boolean[] {
+  const n = originalLines.length;
+  const m = resultLines.length;
+  if (n === 0) return resultLines.map((line) => line.text.trim().length > 0);
+
+  // Prevent quadratic blow-up on very large documents.
+  if (n > 400 || m > 400) {
+    const originalSet = new Set(originalLines.map((line) => `${line.text.trim()}@@${line.styleKey}`));
+    return resultLines.map((line) => {
+      const normalized = line.text.trim();
+      if (!normalized) return false;
+      return !originalSet.has(`${normalized}@@${line.styleKey}`);
+    });
+  }
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      if (
+        originalLines[i].text === resultLines[j].text
+        && originalLines[i].styleKey === resultLines[j].styleKey
+      ) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const keep = new Set<number>();
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (
+      originalLines[i].text === resultLines[j].text
+      && originalLines[i].styleKey === resultLines[j].styleKey
+    ) {
+      keep.add(j);
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+
+  return resultLines.map((line, idx) => {
+    if (!line.text.trim()) return false;
+    return !keep.has(idx);
+  });
+}
+
+function inferParentFileId(
+  lineageKey: string,
+  uploadedAt: number,
+  pool: WorkspaceFile[],
+): string | null {
+  const candidates = pool
+    .filter((file) => {
+      if (!isHwpFamily(file)) return false;
+      const key = file.lineageKey || buildLineageKey(file.name);
+      return key === lineageKey && (file.uploadedAt ?? 0) < uploadedAt;
+    })
+    .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0));
+  return candidates[0]?.id ?? null;
+}
+
+function findNearestParentByLineage(activeFile: WorkspaceFile, files: WorkspaceFile[]): WorkspaceFile | null {
+  const activeKey = activeFile.lineageKey || buildLineageKey(activeFile.name);
+  const activeTs = activeFile.uploadedAt ?? 0;
+  const parentCandidates = files
+    .filter((file) => {
+      if (file.id === activeFile.id || !isHwpFamily(file)) return false;
+      const key = file.lineageKey || buildLineageKey(file.name);
+      return key === activeKey && (file.uploadedAt ?? 0) < activeTs;
+    })
+    .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0));
+  return parentCandidates[0] ?? null;
+}
+
+function findNearestChildByLineage(activeFile: WorkspaceFile, files: WorkspaceFile[]): WorkspaceFile | null {
+  const activeKey = activeFile.lineageKey || buildLineageKey(activeFile.name);
+  const activeTs = activeFile.uploadedAt ?? 0;
+  const childCandidates = files
+    .filter((file) => {
+      if (file.id === activeFile.id || !isHwpFamily(file)) return false;
+      const key = file.lineageKey || buildLineageKey(file.name);
+      return key === activeKey && (file.uploadedAt ?? 0) > activeTs;
+    })
+    .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0));
+  return childCandidates[0] ?? null;
+}
+
+function isChildFileByRule(activeFile: WorkspaceFile | null, files: WorkspaceFile[]): boolean {
+  if (!activeFile || !isHwpFamily(activeFile)) return false;
+  if (activeFile.parentFileId) return true;
+  return !!findNearestParentByLineage(activeFile, files);
+}
+
+function findDiffPairForActiveFile(
+  activeFile: WorkspaceFile | null,
+  files: WorkspaceFile[],
+  previews: Record<string, FilePreview>,
+): DiffPair | null {
+  if (!activeFile || !isHwpFamily(activeFile)) return null;
+
+  const lineageKey = activeFile.lineageKey || buildLineageKey(activeFile.name);
+
+  // Case 1: selected file is child (has parent reference or inferable parent)
+  const explicitParent = activeFile.parentFileId ? files.find((file) => file.id === activeFile.parentFileId) || null : null;
+  const inferredParent = explicitParent || findNearestParentByLineage(activeFile, files);
+  if (inferredParent) {
+    const originalPreview = previews[inferredParent.id];
+    const resultPreview = previews[activeFile.id];
+    if (!hasComparableData(inferredParent, originalPreview) || !hasComparableData(activeFile, resultPreview)) return null;
+    return {
+      originalFile: inferredParent,
+      resultFile: activeFile,
+      originalPreview,
+      resultPreview,
+      lineageKey,
+      relation: 'parent-child',
+    };
+  }
+
+  // Case 2: selected file is parent -> compare with the nearest newer child
+  const inferredChild = findNearestChildByLineage(activeFile, files);
+  if (!inferredChild) return null;
+  const originalPreview = previews[activeFile.id];
+  const resultPreview = previews[inferredChild.id];
+  if (!hasComparableData(activeFile, originalPreview) || !hasComparableData(inferredChild, resultPreview)) return null;
+  return {
+    originalFile: activeFile,
+    resultFile: inferredChild,
+    originalPreview,
+    resultPreview,
+    lineageKey,
+    relation: 'parent-child',
+  };
+}
+
+function hasComparableData(file: WorkspaceFile, preview: FilePreview | undefined): boolean {
+  if (extractComparableLines(preview)) return true;
+  return !!parseComparableLinesFromTokens(file.compareLineTokens, file.compareText);
+}
 
 function laneNumberFromSessionId(sessionId: string): number {
   if (!sessionId) return 100;
@@ -135,20 +428,35 @@ function fromUiSession(s: UiSession): any {
 const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void> }) => {
   const [selectedModel, setSelectedModel] = useState<Provider | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'ready' | 'error'>('idle');
+  const [statusMessage, setStatusMessage] = useState('');
+
+  const waitForRuntimeReady = async (intervalMs: number = 1500): Promise<void> => {
+    while (true) {
+      const [brainOk, agentOk] = await Promise.all([
+        fetch(`${window.hihangul.brainBaseUrl}/health`).then((r) => r.ok).catch(() => false),
+        fetch(`${window.hihangul.agentBaseUrl}/health`).then((r) => r.ok).catch(() => false),
+      ]);
+      if (brainOk && agentOk) return;
+      setStatusMessage(`서비스 대기 중... Brain(${brainOk ? 'ok' : 'x'}) Agent(${agentOk ? 'ok' : 'x'})`);
+      await new Promise((r) => window.setTimeout(r, intervalMs));
+    }
+  };
 
   const handleConnect = async () => {
     if (!selectedModel || isConnecting) return;
     try {
       setIsConnecting(true);
       setStatus('connecting');
-      await new Promise((r) => window.setTimeout(r, 800));
-      setStatus('connected');
-      await new Promise((r) => window.setTimeout(r, 500));
+      setStatusMessage('Windows 런타임(Brain/Agent) 상태를 확인하는 중...');
+      await waitForRuntimeReady();
+      setStatus('ready');
+      setStatusMessage('런타임 준비 완료. 워크스페이스로 진입합니다.');
       await onLogin(selectedModel);
     } catch (error) {
       logUiError('auth.connect', error, { selectedModel });
-      setStatus('idle');
+      setStatus('error');
+      setStatusMessage(`연결 실패: ${(error as Error).message || 'unknown error'}`);
     } finally {
       setIsConnecting(false);
     }
@@ -212,8 +520,13 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
             type="button"
           >
             {isConnecting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Cpu className="w-5 h-5" />}
-            {status === 'connected' ? '환경 진입 중...' : '시스템 연결 및 시작'}
+            {status === 'ready' ? '환경 진입 중...' : '시스템 연결 및 시작'}
           </button>
+          {status !== 'idle' ? (
+            <p className={`text-xs ${status === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>
+              {statusMessage}
+            </p>
+          ) : null}
         </div>
       </div>
     </div>
@@ -379,11 +692,18 @@ const PanelTab = ({ label, icon: Icon, active, onClick, badge }: any) => (
 );
 
 const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading }: any) => {
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    files.forEach((f: WorkspaceFile) => map.set(f.id, f.name));
+    return map;
+  }, [files]);
+
   const getFileIcon = (type: string) => {
     switch (type) {
       case 'xlsx':
         return <FileSpreadsheet className="w-4 h-4 text-green-600" />;
       case 'hwp':
+      case 'hwpx':
         return <FileText className="w-4 h-4 text-blue-600" />;
       default:
         return <File className="w-4 h-4 text-slate-400" />;
@@ -429,6 +749,11 @@ const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading
                   <span className="text-slate-300">|</span>
                   <span>{file.date}</span>
                 </div>
+                {file.parentFileId ? (
+                  <div className="mt-1 text-[11px] text-emerald-700 truncate">
+                    child of {nameById.get(file.parentFileId) || file.parentFileId}
+                  </div>
+                ) : null}
               </div>
               {activeFileId === file.id && <CheckCircle className="w-4 h-4 text-blue-600" />}
             </div>
@@ -439,6 +764,108 @@ const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading
       <div className="p-3 border-t border-slate-200 text-center bg-slate-50">
         <p className="text-[10px] text-slate-400">Parallels Shared Folder: <span className="font-mono text-slate-500">Z:\Mac\Project</span></p>
       </div>
+    </div>
+  );
+};
+
+const PdfOverlayViewer = ({
+  title,
+  pdfUrl,
+  highlights,
+}: {
+  title: string;
+  pdfUrl: string;
+  highlights?: PdfHighlightBox[];
+}) => {
+  const [pages, setPages] = useState<Array<{ page: number; dataUrl: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const renderPdf = async () => {
+      setLoading(true);
+      setError(null);
+      setPages([]);
+      try {
+        const mod: any = await import(/* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.min.mjs');
+        const pdfjs = mod?.default || mod;
+        if (!pdfjs?.getDocument) throw new Error('pdfjs not available');
+        pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs';
+        const doc = await pdfjs.getDocument(pdfUrl).promise;
+        const rendered: Array<{ page: number; dataUrl: string }> = [];
+        for (let pageNo = 1; pageNo <= doc.numPages; pageNo += 1) {
+          const page = await doc.getPage(pageNo);
+          const viewport = page.getViewport({ scale: 1.35 });
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) continue;
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          rendered.push({ page: pageNo, dataUrl: canvas.toDataURL('image/png') });
+        }
+        if (!cancelled) setPages(rendered);
+      } catch (e) {
+        if (!cancelled) {
+          setError((e as Error).message || 'pdf render failed');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    renderPdf();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfUrl]);
+
+  const byPage = useMemo(() => {
+    const map = new Map<number, PdfHighlightBox[]>();
+    (highlights || []).forEach((box) => {
+      if (!map.has(box.page)) map.set(box.page, []);
+      map.get(box.page)!.push(box);
+    });
+    return map;
+  }, [highlights]);
+
+  if (loading) {
+    return (
+      <div className="w-full h-full min-h-0 bg-white flex items-center justify-center text-xs text-slate-500">
+        <Loader2 className="w-4 h-4 animate-spin mr-2" /> PDF 렌더링 중...
+      </div>
+    );
+  }
+
+  if (error || pages.length === 0) {
+    return (
+      <iframe
+        title={title}
+        src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+        className="w-full h-full border-0 min-h-0 flex-1"
+      />
+    );
+  }
+
+  return (
+    <div className="w-full h-full min-h-0 overflow-auto bg-slate-50 p-2 space-y-3">
+      {pages.map((page) => (
+        <div key={`${title}-p-${page.page}`} className="relative w-full bg-white border border-slate-200 rounded overflow-hidden">
+          <img src={page.dataUrl} alt={`${title} page ${page.page}`} className="w-full h-auto block" />
+          {(byPage.get(page.page) || []).map((box, idx) => (
+            <div
+              key={`${title}-hl-${page.page}-${idx}`}
+              className="absolute bg-lime-300/40 pointer-events-none"
+              style={{
+                left: `${Math.max(0, Math.min(1, box.x)) * 100}%`,
+                top: `${Math.max(0, Math.min(1, box.y)) * 100}%`,
+                width: `${Math.max(0, Math.min(1, box.w)) * 100}%`,
+                height: `${Math.max(0, Math.min(1, box.h)) * 100}%`,
+              }}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
 };
@@ -589,7 +1016,16 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
   const handleStartApp = (app: any) => {
     try {
       const id = makeId('session');
-      const appFile = { id: makeId('file'), name: 'target_document.hwp', size: 'Unknown', type: 'hwp', date: 'Now' };
+      const appFile = {
+        id: makeId('file'),
+        name: 'target_document.hwp',
+        size: 'Unknown',
+        type: 'hwp',
+        date: 'Now',
+        uploadedAt: Date.now(),
+        lineageKey: buildLineageKey('target_document.hwp'),
+        parentFileId: null,
+      };
       const s: UiSession = {
         id,
         title: app.title,
@@ -643,13 +1079,61 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     if (mime.startsWith('text/') || TEXT_EXTENSIONS.has(ext)) {
       const raw = await file.text();
       const truncated = raw.length > MAX_TEXT_PREVIEW_LEN;
+      const textContent = truncated ? raw.slice(0, MAX_TEXT_PREVIEW_LEN) : raw;
+      const compareLineTokens = splitLines(textContent).map((line) => `${line.text}\u241F${line.styleKey}`);
       return {
         kind: 'text',
-        content: truncated ? raw.slice(0, MAX_TEXT_PREVIEW_LEN) : raw,
+        content: textContent,
         truncated,
+        compareText: textContent,
+        compareLineTokens,
       };
     }
     if (ext === 'hwp' || ext === 'hwpx') {
+      const fetchComparablePreview = async (): Promise<{ rich?: FilePreview; text?: FilePreview; detail?: string }> => {
+        const fallbackForm = new FormData();
+        fallbackForm.append('file', file, file.name);
+        const res = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/preview?layout_mode=precise`, {
+          method: 'POST',
+          body: fallbackForm,
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => '');
+          return { detail: detail || String(res.status) };
+        }
+        const data = await res.json();
+        const preview = data?.preview;
+        if (preview?.kind === 'rich' && Array.isArray(preview.blocks)) {
+          const content = typeof preview.content === 'string' ? preview.content : '';
+          const lines = richBlocksToComparableLines(preview.blocks);
+          const compareLineTokens = lines.map((line) => `${line.text}\u241F${line.styleKey}`);
+          return {
+            rich: {
+              kind: 'rich',
+              blocks: preview.blocks,
+              content,
+              truncated: !!preview.truncated,
+              compareText: content,
+              compareLineTokens,
+            },
+          };
+        }
+        if (preview?.kind === 'text' && typeof preview.content === 'string') {
+          const lines = splitLines(preview.content);
+          const compareLineTokens = lines.map((line) => `${line.text}\u241F${line.styleKey}`);
+          return {
+            text: {
+              kind: 'text',
+              content: preview.content,
+              truncated: !!preview.truncated,
+              compareText: preview.content,
+              compareLineTokens,
+            },
+          };
+        }
+        return { detail: 'HWP 미리보기 결과를 해석할 수 없습니다.' };
+      };
+
       try {
         const form = new FormData();
         form.append('file', file, file.name);
@@ -659,37 +1143,18 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
         });
         if (pdfRes.ok) {
           const pdfBlob = await pdfRes.blob();
-          return { kind: 'pdf', url: URL.createObjectURL(pdfBlob) };
+          const compare = await fetchComparablePreview().catch(() => ({}));
+          const compareText = compare.rich?.compareText || compare.text?.compareText;
+          const compareLineTokens = compare.rich?.compareLineTokens || compare.text?.compareLineTokens;
+          const richBlocks = compare.rich?.kind === 'rich' ? compare.rich.blocks : undefined;
+          return { kind: 'pdf', url: URL.createObjectURL(pdfBlob), compareText, compareLineTokens, richBlocks };
         }
-
-        const fallbackForm = new FormData();
-        fallbackForm.append('file', file, file.name);
-        const res = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/preview`, {
-          method: 'POST',
-          body: fallbackForm,
-        });
-        if (!res.ok) {
-          const detail = await pdfRes.text();
-          return { kind: 'none', note: `HWP 미리보기 생성 실패: ${detail || res.status}` };
-        }
-        const data = await res.json();
-        const preview = data?.preview;
-        if (preview?.kind === 'rich' && Array.isArray(preview.blocks)) {
-          return {
-            kind: 'rich',
-            blocks: preview.blocks,
-            content: typeof preview.content === 'string' ? preview.content : '',
-            truncated: !!preview.truncated,
-          };
-        }
-        if (preview?.kind === 'text' && typeof preview.content === 'string') {
-          return {
-            kind: 'text',
-            content: preview.content,
-            truncated: !!preview.truncated,
-          };
-        }
-        return { kind: 'none', note: 'HWP 미리보기 결과를 해석할 수 없습니다.' };
+        const renderDetail = await pdfRes.text().catch(() => '');
+        const compare = await fetchComparablePreview().catch(() => ({}));
+        if (compare.rich) return compare.rich;
+        if (compare.text) return compare.text;
+        const detail = compare.detail || renderDetail || 'unknown error';
+        return { kind: 'none', note: `HWP 미리보기 생성 실패: ${detail}` };
       } catch (error) {
         logUiError('file.preview.hwp', error, { file: file.name });
         return { kind: 'none', note: 'HWP 미리보기 요청 실패: windows-agent 연결 상태를 확인하세요.' };
@@ -746,7 +1211,8 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
       if (!picked.length || !activeSessionId) return;
       setIsFileLoading(true);
 
-      const mapped: WorkspaceFile[] = picked.map((file) => {
+      const now = Date.now();
+      const mapped: WorkspaceFile[] = picked.map((file, index) => {
         const ext = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : 'other';
         const sizeMb = file.size / (1024 * 1024);
         const size = sizeMb >= 1 ? `${sizeMb.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
@@ -757,22 +1223,48 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
           type: ext || 'other',
           date: 'Just now',
           mime: file.type || 'application/octet-stream',
+          uploadedAt: now + index,
         };
       });
 
+      const existingFiles = activeSession?.files ?? [];
+      const withLineage: WorkspaceFile[] = [];
+      for (const file of mapped) {
+        if (!isHwpFamily(file)) {
+          withLineage.push(file);
+          continue;
+        }
+        const lineageKey = buildLineageKey(file.name);
+        const pool = [...existingFiles, ...withLineage];
+        const parentFileId = inferParentFileId(lineageKey, file.uploadedAt ?? now, pool);
+        withLineage.push({
+          ...file,
+          lineageKey,
+          parentFileId,
+        });
+      }
+
       const previews = await Promise.all(picked.map((file) => buildPreviewForFile(file)));
       const nextPreviewById: Record<string, FilePreview> = {};
-      mapped.forEach((f, idx) => {
-        nextPreviewById[f.id] = previews[idx];
+      const withComparable = withLineage.map((f, idx) => {
+        const preview = previews[idx];
+        nextPreviewById[f.id] = preview;
+        const payload = buildComparablePayload(preview);
+        if (!payload) return f;
+        return {
+          ...f,
+          compareText: payload.compareText,
+          compareLineTokens: payload.compareLineTokens,
+        };
       });
       setFilePreviewById((prev) => ({ ...prev, ...nextPreviewById }));
 
       updateActiveSession((session) => ({
         ...session,
-        files: [...session.files, ...mapped],
-        activeFileId: mapped[0]?.id ?? session.activeFileId,
-        preview: `파일 ${mapped[0]?.name ?? ''} 업로드 완료`,
-        messages: [...session.messages, { id: makeId('msg'), sender: 'ai', text: `파일(${mapped[0]?.name})이 업로드되었습니다. 문서 구조 분석을 완료했습니다.`, timestamp: 'Now' }],
+        files: [...session.files, ...withComparable],
+        activeFileId: withComparable[0]?.id ?? session.activeFileId,
+        preview: `파일 ${withComparable[0]?.name ?? ''} 업로드 완료`,
+        messages: [...session.messages, { id: makeId('msg'), sender: 'ai', text: `파일(${withComparable[0]?.name})이 업로드되었습니다. 문서 구조 분석을 완료했습니다.`, timestamp: 'Now' }],
       }));
       event.target.value = '';
     } catch (error) {
@@ -800,6 +1292,43 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
 
   const laneNumber = laneNumberFromSessionId(activeSessionId ?? '');
   const activeFilePreview = activeFile ? filePreviewById[activeFile.id] : undefined;
+  const diffPair = useMemo(
+    () => findDiffPairForActiveFile(activeFile, fileList, filePreviewById),
+    [activeFile, fileList, filePreviewById],
+  );
+  const diffData = useMemo(() => {
+    if (!diffPair) return null;
+    const originalLines =
+      extractComparableLines(diffPair.originalPreview)
+      || parseComparableLinesFromTokens(diffPair.originalFile.compareLineTokens, diffPair.originalFile.compareText);
+    const resultLines =
+      extractComparableLines(diffPair.resultPreview)
+      || parseComparableLinesFromTokens(diffPair.resultFile.compareLineTokens, diffPair.resultFile.compareText);
+    if (!originalLines || !resultLines) return null;
+    const changedInResult = changedLinesByLcs(originalLines, resultLines);
+    const changedCount = changedInResult.filter(Boolean).length;
+    return { originalLines, resultLines, changedInResult, changedCount };
+  }, [diffPair]);
+  const diffRichData = useMemo(() => {
+    if (!diffPair) return null;
+    const originalBlocks = extractRichBlocks(diffPair.originalPreview);
+    const resultBlocks = extractRichBlocks(diffPair.resultPreview);
+    if (!originalBlocks || !resultBlocks) return null;
+    const originalSignatureSet = new Set(originalBlocks.map((block) => blockSignature(block)));
+    const changedBlockIndexes = resultBlocks
+      .map((block, idx) => (originalSignatureSet.has(blockSignature(block)) ? -1 : idx))
+      .filter((idx) => idx >= 0);
+    return {
+      originalBlocks,
+      resultBlocks,
+      changedBlockIndexes: new Set(changedBlockIndexes),
+      changedCount: changedBlockIndexes.length,
+    };
+  }, [diffPair]);
+
+  useEffect(() => {
+    setDiffMode(isChildFileByRule(activeFile, fileList));
+  }, [activeFile?.id, fileList]);
 
   return (
     <div className="hihangul-tailwind-ui flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
@@ -1030,19 +1559,181 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
             ) : (
               <div className="flex-1 bg-white overflow-hidden flex justify-center animate-in fade-in duration-300">
                 <div className="w-full max-w-4xl h-full min-h-0 relative transition-all flex flex-col">
-                  <div className="h-9 bg-slate-200 flex items-center px-4 gap-2 border-b border-slate-300 flex-shrink-0">
-                    <div className="flex gap-2 mr-4">
-                      <div className="w-3 h-3 rounded-full bg-red-400" />
-                      <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                      <div className="w-3 h-3 rounded-full bg-green-400" />
+                  <div className="px-4 py-2.5 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between gap-4 flex-shrink-0">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${diffMode ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                          {diffMode ? 'DIFF VIEW' : 'DOCUMENT VIEW'}
+                        </span>
+                        {diffMode && diffPair ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                            changed {diffRichData ? diffRichData.changedCount : diffData?.changedCount || 0}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-sm font-semibold text-slate-800 truncate">
+                        {diffMode && diffPair ? `${diffPair.originalFile.name} -> ${diffPair.resultFile.name}` : activeFile ? activeFile.name : 'No file selected'}
+                      </div>
                     </div>
-                    <div className="h-4 w-px bg-slate-400 mx-2" />
-                    <span className="text-xs text-slate-600 font-mono font-medium flex-1 text-center">{activeFile ? activeFile.name : 'No file selected'}</span>
-                    <div className="text-[10px] text-slate-500">100%</div>
+                    <div className="text-[11px] text-slate-500 font-medium flex-shrink-0">
+                      {diffMode && diffPair ? 'Result-focused compare' : 'Preview'}
+                    </div>
                   </div>
                   <div className={`${activeFilePreview?.kind === 'pdf' ? 'p-0 overflow-hidden' : 'p-8 overflow-auto'} text-slate-800 flex-1 min-h-0`}>
 
-                    {!activeFile ? (
+                    {diffMode ? (
+                      diffPair && (diffData || diffRichData) ? (
+                        <div className="h-full min-h-[420px] flex flex-col gap-3">
+                          {(() => {
+                            const bothPdf = diffPair.originalPreview.kind === 'pdf' && diffPair.resultPreview.kind === 'pdf';
+                            const changedLines = diffData
+                              ? diffData.resultLines
+                                .map((line, idx) => ({ line, idx, changed: diffData.changedInResult[idx] }))
+                                .filter((row) => row.changed)
+                              : [];
+                            if (bothPdf) {
+                              const changedBboxes: PdfHighlightBox[] = diffRichData
+                                ? diffRichData.resultBlocks
+                                    .map((block, idx) => {
+                                      if (!diffRichData.changedBlockIndexes.has(idx) || !block.bbox) return null;
+                                      return {
+                                        page: block.bbox.page,
+                                        x: block.bbox.x,
+                                        y: block.bbox.y,
+                                        w: block.bbox.w,
+                                        h: block.bbox.h,
+                                      };
+                                    })
+                                    .filter(Boolean) as PdfHighlightBox[]
+                                : [];
+                              return (
+                                <>
+                                  <div className="px-3 py-2 rounded-lg border text-xs bg-emerald-50 border-emerald-200 text-emerald-800">
+                                    PDF 내부 직접 하이라이트 모드: 결과 문서에 변경 좌표를 오버레이합니다. (하이라이트 {changedBboxes.length}개)
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3 min-h-0 flex-1">
+                                    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white min-h-0 flex flex-col">
+                                      <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700">
+                                        Original PDF · {diffPair.originalFile.name}
+                                      </div>
+                                      <PdfOverlayViewer
+                                        title={`Original ${diffPair.originalFile.name}`}
+                                        pdfUrl={diffPair.originalPreview.url}
+                                      />
+                                    </div>
+                                    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white min-h-0 flex flex-col">
+                                      <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700">
+                                        Result PDF · {diffPair.resultFile.name}
+                                      </div>
+                                      <PdfOverlayViewer
+                                        title={`Result ${diffPair.resultFile.name}`}
+                                        pdfUrl={diffPair.resultPreview.url}
+                                        highlights={changedBboxes}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3 max-h-40 overflow-auto">
+                                    <div className="text-xs font-semibold text-emerald-900 mb-2">
+                                      변경 목록 ({changedLines.length})
+                                    </div>
+                                    {changedLines.length === 0 ? (
+                                      <div className="text-xs text-emerald-800">비교 가능한 텍스트 변경이 감지되지 않았습니다.</div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        {changedLines.slice(0, 80).map(({ line, idx }) => (
+                                          <div key={`chg-${idx}`} className="text-xs bg-white/80 border border-emerald-200 rounded px-2 py-1 text-emerald-900">
+                                            L{idx + 1}: {line.text || '(blank)'}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {!(diffPair.originalPreview.kind === 'pdf' && diffPair.resultPreview.kind === 'pdf') ? (
+                            <>
+                              <div className="px-3 py-2 rounded-lg border text-xs bg-emerald-50 border-emerald-200 text-emerald-800">
+                                Viewer Diff: <strong>{diffPair.originalFile.name}</strong> 대비 <strong>{diffPair.resultFile.name}</strong> 변경 항목
+                                <strong> {diffRichData ? diffRichData.changedCount : diffData?.changedCount || 0}개</strong>를 결과 문서에 강조 표시합니다.
+                              </div>
+                              <div className="h-full min-h-0 overflow-auto bg-white rounded-lg border border-slate-200 p-4">
+                                {diffRichData ? (
+                                  <div className="m-0 text-[15px] leading-8 whitespace-pre-wrap break-words font-serif text-slate-800">
+                                    {diffRichData.resultBlocks.map((block, blockIndex) => {
+                                      const changed = diffRichData.changedBlockIndexes.has(blockIndex);
+                                      const blockClass = changed ? 'bg-emerald-100/80 rounded px-2 py-1' : '';
+                                      if (block.type === 'table') {
+                                        return (
+                                          <div key={`diff-tbl-${blockIndex}`} className={`my-6 overflow-auto border border-slate-300 ${blockClass}`}>
+                                            {changed && block.bbox ? (
+                                              <div className="text-[10px] px-2 py-1 bg-emerald-200/70 text-emerald-900 border-b border-emerald-300">
+                                                p{block.bbox.page} x={block.bbox.x.toFixed(3)} y={block.bbox.y.toFixed(3)} w={block.bbox.w.toFixed(3)} h={block.bbox.h.toFixed(3)}
+                                              </div>
+                                            ) : null}
+                                            <table className="w-full border-collapse text-[14px]">
+                                              <tbody>
+                                                {block.rows.map((row, rowIndex) => (
+                                                  <tr key={`diff-row-${blockIndex}-${rowIndex}`} className="border-b border-slate-200">
+                                                    {row.map((cell, cellIndex) => (
+                                                      <td key={`diff-cell-${blockIndex}-${rowIndex}-${cellIndex}`} className="border-r border-slate-200 px-3 py-2 align-top">
+                                                        {cell}
+                                                      </td>
+                                                    ))}
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <p key={`diff-p-${blockIndex}`} className={`my-1 ${blockClass}`}>
+                                          {changed && block.bbox ? (
+                                            <span className="inline-block mr-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 text-emerald-900 align-middle">
+                                              p{block.bbox.page} y={block.bbox.y.toFixed(3)}
+                                            </span>
+                                          ) : null}
+                                          {block.runs.map((run, runIndex) => (
+                                            <span
+                                              key={`diff-run-${blockIndex}-${runIndex}`}
+                                              style={{
+                                                fontSize: `${run.font_size_px}px`,
+                                                fontWeight: run.bold ? 700 : 400,
+                                                fontFamily: run.font_family || 'Malgun Gothic, Noto Sans KR, sans-serif',
+                                              }}
+                                            >
+                                              {run.text}{' '}
+                                            </span>
+                                          ))}
+                                        </p>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="text-[13px] leading-6 font-mono">
+                                    {diffData.resultLines.map((line, idx) => (
+                                      <div
+                                        key={`res-${idx}`}
+                                        className={`px-2 ${diffData.changedInResult[idx] ? 'bg-emerald-100 text-emerald-900 rounded' : 'text-slate-700'}`}
+                                      >
+                                        <span>{line.text || ' '}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 text-sm text-amber-800">
+                          비교 가능한 부모-자식 파일 쌍을 찾지 못했습니다. 같은 계보(lineage)의 HWP/HWPX 원본/파생 파일을 업로드한 뒤 다시 선택하세요.
+                        </div>
+                      )
+                    ) : !activeFile ? (
                       <div className="text-sm text-slate-500">미리볼 파일을 선택하세요.</div>
                     ) : isFileLoading ? (
                       <div className="bg-white p-10 flex flex-col items-center justify-center gap-3 min-h-[320px]">

@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 set "SRC=C:\Mac\Home\IdeaProjects\hihangul"
 set "DST=C:\dev\hihangul"
@@ -17,9 +17,7 @@ if not exist "%SRC%" (
 
 if not exist "%DST%" mkdir "%DST%"
 
-robocopy "%SRC%" "%DST%" /E /R:2 /W:1 /MT:16 ^
-  /XD .git node_modules .venv dist dist-electron __pycache__ ^
-  /XF *.pyc *.pyo *.DS_Store
+robocopy "%SRC%" "%DST%" /E /IS /IT /R:2 /W:1 /MT:16 /XD .git node_modules .venv dist dist-electron __pycache__ /XF *.pyc *.pyo *.DS_Store
 
 set "RC=%ERRORLEVEL%"
 if %RC% GEQ 8 (

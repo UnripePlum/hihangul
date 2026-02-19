@@ -40,11 +40,23 @@ This launches 3 terminals:
 
 ## 2) Electron remote debug flags
 
-Applied in `apps/windows-ui/src/main/electron.ts`:
+Applied in `apps/windows-ui/src/main/electron.ts` only when:
+
+- dev mode (`VITE_DEV_SERVER_URL` set)
+- `HIHANGUL_ENABLE_REMOTE_DEBUGGING=1`
+
+Flags:
 
 - `--remote-debugging-port=9222`
 - `--remote-debugging-address=0.0.0.0`
 - `--remote-allow-origins=*`
+
+Windows CMD example:
+
+```cmd
+set HIHANGUL_ENABLE_REMOTE_DEBUGGING=1
+scripts\dev\start_hihangul_windows.cmd --sync
+```
 
 ## 3) Windows network setup for Mac attach
 
@@ -56,11 +68,16 @@ ipconfig | findstr IPv4
 
 Example: `10.211.55.3`
 
-### 3.2 Port proxy + firewall (Admin PowerShell)
+### 3.2 Firewall allow rule (Admin PowerShell)
+
+```powershell
+New-NetFirewallRule -DisplayName "DevTools 9222" -Direction Inbound -LocalPort 9222 -Protocol TCP -Action Allow
+```
+
+If your VM network policy still blocks direct inbound access, add portproxy as fallback:
 
 ```powershell
 netsh interface portproxy add v4tov4 listenaddress=10.211.55.3 listenport=9222 connectaddress=127.0.0.1 connectport=9222
-New-NetFirewallRule -DisplayName "DevTools 9222" -Direction Inbound -LocalPort 9222 -Protocol TCP -Action Allow
 ```
 
 ## 4) Connect from Mac Chrome

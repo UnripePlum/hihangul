@@ -82,7 +82,7 @@ async def package_program(req: PackageRequest) -> PackageResponse:
 
 
 @app.post("/v1/viewer/preview")
-async def preview_document(file: UploadFile) -> dict:
+async def preview_document(file: UploadFile, layout_mode: str = "approx") -> dict:
     if not file.filename:
         raise HTTPException(status_code=400, detail="file name is required")
     ext = file.filename.lower().rsplit(".", 1)[-1] if "." in file.filename else ""
@@ -92,9 +92,16 @@ async def preview_document(file: UploadFile) -> dict:
     raw = await file.read()
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="file too large (max 25MB)")
+    if layout_mode not in {"approx", "precise"}:
+        raise HTTPException(status_code=400, detail="layout_mode must be one of: approx, precise")
 
     try:
-        preview = build_document_preview(file.filename, raw)
+        preview = build_document_preview(
+            file.filename,
+            raw,
+            layout_mode=layout_mode,
+            render_pdf=render_to_pdf_via_hwp_engine,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

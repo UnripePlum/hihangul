@@ -16,7 +16,8 @@ const ENABLE_REMOTE_DEBUG =
 app.disableHardwareAcceleration();
 if (ENABLE_REMOTE_DEBUG) {
   app.commandLine.appendSwitch("remote-debugging-port", "9222");
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  app.commandLine.appendSwitch("remote-debugging-address", "0.0.0.0");
+  app.commandLine.appendSwitch("remote-allow-origins", "*");
 }
 
 function hasCommand(command: string): boolean {
