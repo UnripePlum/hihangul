@@ -30,14 +30,32 @@ cd /d "%APP_DIR%"
 
 echo [start] app dir: %CD%
 
-echo [start] checking node_modules...
+set "NPM_HASH_SOURCE=package-lock.json"
+if not exist "%NPM_HASH_SOURCE%" set "NPM_HASH_SOURCE=package.json"
+set "NPM_HASH="
+for /f "delims=" %%H in ('certutil -hashfile "%NPM_HASH_SOURCE%" SHA256 ^| findstr /R /I "^[0-9A-F][0-9A-F]"') do (
+  if not defined NPM_HASH set "NPM_HASH=%%H"
+)
+set "NPM_HASH=%NPM_HASH: =%"
+set "OLD_NPM_HASH="
+if exist "node_modules\.deps-hash" set /p OLD_NPM_HASH=<"node_modules\.deps-hash"
+set "INSTALL_NPM=0"
+
+echo [start] checking node_modules/install state...
 if not exist "node_modules" (
+  set "INSTALL_NPM=1"
+)
+if "%NPM_HASH%"=="" set "INSTALL_NPM=1"
+if /I not "%NPM_HASH%"=="%OLD_NPM_HASH%" set "INSTALL_NPM=1"
+
+if "%INSTALL_NPM%"=="1" (
   echo [start] node_modules missing. running npm install...
   call npm.cmd install
   if errorlevel 1 (
     echo [start] ERROR: npm install failed
     exit /b 1
   )
+  > "node_modules\.deps-hash" echo %NPM_HASH%
 )
 
 echo [start] checking lucide-react...
@@ -49,6 +67,7 @@ if errorlevel 1 (
     echo [start] ERROR: lucide-react install failed
     exit /b 1
   )
+  if not "%NPM_HASH%"=="" > "node_modules\.deps-hash" echo %NPM_HASH%
 )
 
 echo [start] starting dev:win-vm

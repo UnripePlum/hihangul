@@ -18,7 +18,8 @@ const ENABLE_REMOTE_DEBUG = isDev && process.env.HIHANGUL_ENABLE_REMOTE_DEBUGGIN
 electron_1.app.disableHardwareAcceleration();
 if (ENABLE_REMOTE_DEBUG) {
     electron_1.app.commandLine.appendSwitch("remote-debugging-port", "9222");
-    electron_1.app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+    electron_1.app.commandLine.appendSwitch("remote-debugging-address", "0.0.0.0");
+    electron_1.app.commandLine.appendSwitch("remote-allow-origins", "*");
 }
 function hasCommand(command) {
     if (process.platform === "win32") {

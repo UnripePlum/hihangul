@@ -16,5 +16,5 @@
 ## 3) Codex mode now
 
 - `provider=codex` requires `auth_mode=codex_cli`
-- Required action: run `codex --login` on the same host where `windows-brain` runs
+- Required action: run `codex login` on the same host where `windows-brain` runs
 - Check endpoint: `GET /v1/auth/codex/status`

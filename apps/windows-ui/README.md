@@ -18,4 +18,5 @@ npm run dev
 ```
 
 Chrome 디버깅 포트는 Electron 메인 프로세스에서 `9222`로 열립니다.
+단, dev 모드 + `HIHANGUL_ENABLE_REMOTE_DEBUGGING=1`일 때만 활성화됩니다.
 `chrome://inspect`에서 attach 가능합니다.

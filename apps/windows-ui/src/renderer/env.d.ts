@@ -5,6 +5,7 @@ declare global {
     hihangul: {
       versions: NodeJS.ProcessVersions;
       brainBaseUrl: string;
+      agentBaseUrl: string;
       debugPing: () => Promise<{
         ok: boolean;
         processType: string;

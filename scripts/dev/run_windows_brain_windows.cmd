@@ -28,17 +28,16 @@ if "%PY_EXE%"=="" (
 if "%PY_EXE%"=="" (
   for /f "usebackq delims=" %%P in (`where python 2^>nul`) do (
     if exist "%%~P" (
-      set "PY_EXE=%%~P"
-      goto :py_found
+      echo "%%~P" | findstr /I "WindowsApps" >nul
+      if errorlevel 1 (
+        set "PY_EXE=%%~P"
+        goto :py_found
+      )
     )
   )
 )
 if "%PY_EXE%"=="" (
   for %%P in (
-    "%LocalAppData%\Programs\Python\Python313-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python312-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python311-arm64\python.exe"
-    "%LocalAppData%\Programs\Python\Python310-arm64\python.exe"
     "%LocalAppData%\Programs\Python\Python313\python.exe"
     "%LocalAppData%\Programs\Python\Python312\python.exe"
     "%LocalAppData%\Programs\Python\Python311\python.exe"
@@ -47,6 +46,10 @@ if "%PY_EXE%"=="" (
     "C:\Python312\python.exe"
     "C:\Python311\python.exe"
     "C:\Python310\python.exe"
+    "%LocalAppData%\Programs\Python\Python313-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python312-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python311-arm64\python.exe"
+    "%LocalAppData%\Programs\Python\Python310-arm64\python.exe"
   ) do (
     if exist %%~P (
       set "PY_EXE=%%~P"
@@ -66,6 +69,13 @@ if "%PY_EXE%"=="" (
 echo [windows-brain] python: %PY_EXE%
 
 set "VENV_PY=%APP_DIR%\.venv\Scripts\python.exe"
+if exist "%VENV_PY%" (
+  "%VENV_PY%" -V >nul 2>nul
+  if errorlevel 1 (
+    echo [windows-brain] broken .venv detected ^(invalid base python^). recreating...
+    rmdir /S /Q .venv
+  )
+)
 if not exist "%VENV_PY%" (
   if exist ".venv" (
     echo [windows-brain] broken .venv detected. recreating...
@@ -84,7 +94,19 @@ if not exist "%PY_EXE%" (
   exit /b 1
 )
 
-if not exist ".venv\.deps-ok" (
+set "REQ_HASH="
+for /f "delims=" %%H in ('certutil -hashfile requirements.txt SHA256 ^| findstr /R /I "^[0-9A-F][0-9A-F]"') do (
+  if not defined REQ_HASH set "REQ_HASH=%%H"
+)
+set "REQ_HASH=%REQ_HASH: =%"
+set "OLD_REQ_HASH="
+if exist ".venv\.deps-hash" set /p OLD_REQ_HASH=<".venv\.deps-hash"
+set "INSTALL_DEPS=0"
+if not exist ".venv\.deps-ok" set "INSTALL_DEPS=1"
+if "%REQ_HASH%"=="" set "INSTALL_DEPS=1"
+if /I not "%REQ_HASH%"=="%OLD_REQ_HASH%" set "INSTALL_DEPS=1"
+
+if "%INSTALL_DEPS%"=="1" (
   echo [windows-brain] installing requirements...
   "%PY_EXE%" -m pip install -r requirements.txt
   if errorlevel 1 (
@@ -92,5 +114,6 @@ if not exist ".venv\.deps-ok" (
     exit /b 1
   )
   echo ok> .venv\.deps-ok
+  > ".venv\.deps-hash" echo %REQ_HASH%
 )
 "%PY_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

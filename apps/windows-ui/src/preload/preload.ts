@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const defaultBrainBaseUrl = "http://localhost:8000";
+const defaultAgentBaseUrl = "http://localhost:9000";
 
 const api = {
   versions: process.versions,
   brainBaseUrl: process.env.HIHANGUL_WINDOWS_BRAIN_URL ?? defaultBrainBaseUrl,
+  agentBaseUrl: process.env.HIHANGUL_WINDOWS_AGENT_URL ?? defaultAgentBaseUrl,
   debugPing: () => ipcRenderer.invoke("debug:ping") as Promise<{
     ok: boolean;
     processType: string;
