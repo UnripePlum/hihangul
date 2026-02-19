@@ -466,8 +466,8 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
     <div className="hihangul-tailwind-ui flex items-center justify-center h-screen bg-slate-50 text-slate-800">
       <div className="w-full max-w-md p-8 bg-white rounded-2xl shadow-xl border border-slate-100">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-200">
-            <span className="text-white font-bold text-2xl">Hi</span>
+          <div className="w-16 h-16 bg-white rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-100 border border-slate-100 overflow-hidden">
+            <img src="/hihangul-logo.svg" alt="HiHangul logo" className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900">HiHangul 시작하기</h1>
           <p className="text-slate-500 mt-2 text-sm">사용할 AI 엔진을 선택하여 Windows 환경과 연결합니다.</p>
@@ -1334,8 +1334,8 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     <div className="hihangul-tailwind-ui flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
       <div className="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 transition-all duration-300 sticky top-0 h-screen">
         <div onClick={handleGoHome} className="p-5 flex items-center gap-3 border-b border-slate-800 cursor-pointer hover:bg-slate-800/50 transition-colors">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/50">
-            <span className="text-white font-bold">Hi</span>
+          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/30 overflow-hidden">
+            <img src="/hihangul-logo.svg" alt="HiHangul logo" className="w-full h-full object-contain" />
           </div>
           <span className="font-semibold text-white tracking-wide">HiHangul</span>
         </div>
