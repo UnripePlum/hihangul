@@ -163,24 +163,86 @@ def _inject_precise_bboxes(blocks: list[dict[str, object]], pdf_blocks: list[dic
     return assigned
 
 
-def _parse_hwpx_face_names(header_xml: str) -> dict[str, str]:
-    names: dict[str, str] = {}
+def _parse_hwpx_face_names(header_xml: str) -> dict[str, dict[str, str]]:
+    # language-aware font id -> face name map, e.g. {"HANGUL": {"3": "함초롬바탕"}}
+    names: dict[str, dict[str, str]] = {}
+
+    # Newer/typical HWPX: <hh:fontface lang="HANGUL"> <hh:font id="3" face="...">...</hh:font>
+    for ff_match in re.finditer(
+        r"<[^>]*fontface\b([^>]*)>([\s\S]*?)</[^>]*fontface>",
+        header_xml,
+        flags=re.IGNORECASE,
+    ):
+        ff_attrs = ff_match.group(1) or ""
+        ff_body = ff_match.group(2) or ""
+        lang = (_get_attr(ff_attrs, ["lang"]) or "HANGUL").upper()
+        lang_map = names.setdefault(lang, {})
+        for font_match in re.finditer(r"<[^>]*font\b([^>]*)>", ff_body, flags=re.IGNORECASE):
+            attrs = font_match.group(1) or ""
+            key = _get_attr(attrs, ["id", "fontID", "idRef"])
+            face = _get_attr(attrs, ["face", "name", "fontName", "faceName"])
+            if key and face:
+                lang_map[key] = face
+
+    # Legacy-like fallback: faceName tags (language not explicit)
+    legacy_map = names.setdefault("HANGUL", {})
     for idx, match in enumerate(re.finditer(r"<[^>]*faceName\b([^>]*)/?>", header_xml, flags=re.IGNORECASE)):
         attrs = match.group(1) or ""
         key = _get_attr(attrs, ["id", "faceNameID", "idRef", "fontID"]) or str(idx)
-        name = _get_attr(attrs, ["name", "fontName", "faceName"])
-        if name:
-            names[key] = name
+        face = _get_attr(attrs, ["name", "fontName", "faceName"])
+        if face and key not in legacy_map:
+            legacy_map[key] = face
     return names
 
 
 def _parse_hwpx_char_styles(header_xml: str) -> dict[str, dict[str, object]]:
     styles: dict[str, dict[str, object]] = {}
-    face_names = _parse_hwpx_face_names(header_xml)
-    matches = re.finditer(r"<[^>]*charPr\b([^>]*)/?>", header_xml, flags=re.IGNORECASE)
-    for idx, match in enumerate(matches):
-        attrs = match.group(1) or ""
-        key = _get_attr(attrs, ["id", "charPrID", "charPrId"]) or str(idx)
+    face_names_by_lang = _parse_hwpx_face_names(header_xml)
+    hangul_faces = face_names_by_lang.get("HANGUL", {})
+    latin_faces = face_names_by_lang.get("LATIN", {})
+
+    def resolve_face(attrs: str, body: str) -> str:
+        # direct attributes first
+        family = _get_attr(attrs, ["fontName", "faceName", "font"])
+        if family:
+            return family
+
+        # common id-ref attributes (older variants)
+        ref = _get_attr(
+            attrs,
+            [
+                "hangeulFaceNameIdRef",
+                "hangulFaceNameIdRef",
+                "latinFaceNameIdRef",
+                "hanjaFaceNameIdRef",
+                "japaneseFaceNameIdRef",
+                "otherFaceNameIdRef",
+                "symbolFaceNameIdRef",
+                "userFaceNameIdRef",
+                "fontRef",
+            ],
+        )
+        if ref:
+            return hangul_faces.get(ref) or latin_faces.get(ref) or ""
+
+        # typical HWPX: nested <hh:fontRef hangul="3" latin="3" .../>
+        font_ref_match = re.search(r"<[^>]*fontRef\b([^>]*)/?>", body, flags=re.IGNORECASE)
+        if font_ref_match:
+            ref_attrs = font_ref_match.group(1) or ""
+            hangul_ref = _get_attr(ref_attrs, ["hangul", "hangeul"])
+            latin_ref = _get_attr(ref_attrs, ["latin"])
+            if hangul_ref and hangul_ref in hangul_faces:
+                return hangul_faces[hangul_ref]
+            if latin_ref and latin_ref in latin_faces:
+                return latin_faces[latin_ref]
+            if hangul_ref:
+                return hangul_faces.get(hangul_ref, "")
+            if latin_ref:
+                return latin_faces.get(latin_ref, "")
+        return ""
+
+    def parse_style(attrs: str, body: str, fallback_idx: int) -> tuple[str, dict[str, object]]:
+        key = _get_attr(attrs, ["id", "charPrID", "charPrId"]) or str(fallback_idx)
         height_raw = _get_attr(attrs, ["height", "charHeight", "fontSize"])
         bold_raw = _get_attr(attrs, ["bold", "fontBold"])
         height = int(height_raw) if height_raw.isdigit() else 1000
@@ -190,27 +252,29 @@ def _parse_hwpx_char_styles(header_xml: str) -> dict[str, dict[str, object]]:
         if bold_raw:
             bold_value = bold_raw.strip().lower()
             bold = bold_value in {"1", "true", "t", "yes", "y"}
-        family = _get_attr(attrs, ["fontName", "faceName", "font"])
-        if not family:
-            # Common HWPX refs such as hangeulFaceNameIdRef / latinFaceNameIdRef / fontRef
-            ref = _get_attr(
-                attrs,
-                [
-                    "hangeulFaceNameIdRef",
-                    "latinFaceNameIdRef",
-                    "hanjaFaceNameIdRef",
-                    "japaneseFaceNameIdRef",
-                    "otherFaceNameIdRef",
-                    "symbolFaceNameIdRef",
-                    "userFaceNameIdRef",
-                    "fontRef",
-                ],
-            )
-            if ref:
-                family = face_names.get(ref, "")
+        # nested explicit bold tag
+        if not bold and re.search(r"<[^>]*bold\b", body, flags=re.IGNORECASE):
+            bold = True
+        family = resolve_face(attrs, body)
         if not family:
             family = "Malgun Gothic"
-        styles[key] = {"font_size_px": font_px, "bold": bold, "font_family": family}
+        return (key or str(fallback_idx), {"font_size_px": font_px, "bold": bold, "font_family": family})
+
+    idx = 0
+    # full charPr tags
+    for match in re.finditer(r"<[^>]*charPr\b([^>]*)>([\s\S]*?)</[^>]*charPr>", header_xml, flags=re.IGNORECASE):
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        key, style = parse_style(attrs, body, idx)
+        styles[key] = style
+        idx += 1
+    # self-closing charPr tags
+    for match in re.finditer(r"<[^>]*charPr\b([^>]*)/>", header_xml, flags=re.IGNORECASE):
+        attrs = match.group(1) or ""
+        key, style = parse_style(attrs, "", idx)
+        # preserve explicit full-tag style if both exist
+        styles.setdefault(key, style)
+        idx += 1
     return styles
 
 
