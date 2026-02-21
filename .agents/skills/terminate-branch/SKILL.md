@@ -23,6 +23,7 @@ Follow these exact steps to tear down the workspace:
 2. **Identify the Target Directory:**
    - Run `pwd` to confirm your exact absolute path (e.g., `/Users/.../hihangul-feat-ui-auth-login`).
    - **CRITICAL**: Ensure you are NOT inside the primary `hihangul` repository. You must be in the cloned sibling directory.
+   - **CRITICAL**: Check the current git branch (`git branch --show-current`). You **MUST NOT** be on the `main` branch. This skill is strictly for deleting temporary sibling workspaces associated with feature branches.
 
 3. **Delete the Workspace (Authorized):**
    - Since you have verified the prerequisites, you are hereby authorized to use the `run_command` tool to delete the folder.
