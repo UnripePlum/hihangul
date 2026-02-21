@@ -14,7 +14,7 @@ Follow these exact steps to set up the new branch environment:
 1. **Determine the Task Category & Branch Name:**
    - Categorize the task: Is it strictly `ui`, `agent`, `brain`, or `other`?
    - Formulate a clear branch name (e.g., `feat/ui-auth-login`).
-   - Define the new project directory name based on the branch (e.g., `../hihangul-feat-ui-auth-login`).
+   - Define the new project directory name based on the original project and branch (e.g., `../<original-project-name>-<branch-name>`, like `../hihangul-feat-ui-auth-login`).
 
 2. **Sync and Duplicate the Project:**
    Use the `run_command` tool to execute the following sequence:
