@@ -80,6 +80,13 @@ const api = {
     resultPath?: string;
     message?: string;
   }>,
+  openPath: (filePath: string) => ipcRenderer.invoke(
+    "file:open-path",
+    filePath,
+  ) as Promise<{
+    ok: boolean;
+    message?: string;
+  }>,
 };
 
 contextBridge.exposeInMainWorld("hihangul", api);

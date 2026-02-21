@@ -417,11 +417,11 @@ function normalizeWorkspaceFile(raw: any, index: number): WorkspaceFile {
 function toUiSession(raw: any, idx: number): UiSession {
   const messages: ChatMessage[] = Array.isArray(raw?.messages)
     ? raw.messages.map((m: any, mi: number) => ({
-        id: typeof m?.id === 'string' ? m.id : makeId(`m-${mi}`),
-        sender: m?.role === 'user' ? 'user' : 'ai',
-        text: typeof m?.content === 'string' ? m.content : '',
-        timestamp: 'Now',
-      }))
+      id: typeof m?.id === 'string' ? m.id : makeId(`m-${mi}`),
+      sender: m?.role === 'user' ? 'user' : 'ai',
+      text: typeof m?.content === 'string' ? m.content : '',
+      timestamp: 'Now',
+    }))
     : [DEFAULT_MESSAGE];
 
   const files: WorkspaceFile[] = Array.isArray(raw?.files)
@@ -648,11 +648,10 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => setSelectedModel('claude')}
-                className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${
-                  selectedModel === 'claude'
-                    ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100 shadow-md'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
+                className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${selectedModel === 'claude'
+                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100 shadow-md'
+                  : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
                 type="button"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -665,11 +664,10 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
 
               <button
                 onClick={() => setSelectedModel('codex')}
-                className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${
-                  selectedModel === 'codex'
-                    ? 'border-green-500 bg-green-50 ring-2 ring-green-100 shadow-md'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
+                className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${selectedModel === 'codex'
+                  ? 'border-green-500 bg-green-50 ring-2 ring-green-100 shadow-md'
+                  : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
                 type="button"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -849,9 +847,8 @@ const SaveLogicModal = ({ isOpen, onClose, onSave }: any) => {
 const PanelTab = ({ label, icon: Icon, active, onClick, badge }: any) => (
   <button
     onClick={onClick}
-    className={`flex-1 py-3 flex items-center justify-center gap-2 text-sm font-medium border-b-2 transition-colors relative ${
-      active ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-    }`}
+    className={`flex-1 py-3 flex items-center justify-center gap-2 text-sm font-medium border-b-2 transition-colors relative ${active ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+      }`}
     type="button"
   >
     <Icon className="w-4 h-4" />
@@ -860,7 +857,7 @@ const PanelTab = ({ label, icon: Icon, active, onClick, badge }: any) => (
   </button>
 );
 
-const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading }: any) => {
+const FileListContent = ({ files, activeFileId, onSelect, onContextMenu, onUploadClick, loading }: any) => {
   const nameById = useMemo(() => {
     const map = new Map<string, string>();
     files.forEach((f: WorkspaceFile) => map.set(f.id, f.name));
@@ -904,9 +901,9 @@ const FileListContent = ({ files, activeFileId, onSelect, onUploadClick, loading
             <div
               key={file.id}
               onClick={() => onSelect(file)}
-              className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border shadow-sm ${
-                activeFileId === file.id ? 'bg-white border-blue-400 ring-2 ring-blue-50 z-10' : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-md'
-              }`}
+              onContextMenu={(e) => onContextMenu(e, file)}
+              className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border shadow-sm ${activeFileId === file.id ? 'bg-white border-blue-400 ring-2 ring-blue-50 z-10' : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-md'
+                }`}
             >
               <div className={`p-2.5 rounded-lg ${activeFileId === file.id ? 'bg-blue-50' : 'bg-slate-100 group-hover:bg-blue-50'}`}>
                 {getFileIcon(file.type)}
@@ -1049,6 +1046,7 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
   const [diffMode, setDiffMode] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; file: WorkspaceFile } | null>(null);
   const [visibleRecentCount, setVisibleRecentCount] = useState(4);
   const [storeReady, setStoreReady] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
@@ -1078,15 +1076,21 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
     return () => window.removeEventListener('resize', computeVisibleRecent);
   }, []);
 
+  const latestFilePreviewById = useRef(filePreviewById);
+  useEffect(() => {
+    latestFilePreviewById.current = filePreviewById;
+  }, [filePreviewById]);
+
+  // Cleanup object URLs when the component UNMOUNTS, not on every preview change.
   useEffect(() => {
     return () => {
-      Object.values(filePreviewById).forEach((preview) => {
+      Object.values(latestFilePreviewById.current).forEach((preview) => {
         if ((preview.kind === 'image' || preview.kind === 'pdf') && preview.url.startsWith('blob:')) {
           URL.revokeObjectURL(preview.url);
         }
       });
     };
-  }, [filePreviewById]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1132,9 +1136,15 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
   }, [sessions, activeSessionId, storeReady]);
 
   useEffect(() => {
-    const closeContext = () => setContextMenu(null);
+    const closeContext = () => {
+      setContextMenu(null);
+      setFileContextMenu(null);
+    };
     const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setContextMenu(null);
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setFileContextMenu(null);
+      }
     };
     window.addEventListener('click', closeContext);
     window.addEventListener('keydown', onEsc);
@@ -1147,6 +1157,35 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
   const updateActiveSession = (updater: (s: UiSession) => UiSession) => {
     if (!activeSessionId) return;
     setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? updater(s) : s)));
+  };
+
+  const handleFileContextMenu = (e: React.MouseEvent, file: WorkspaceFile) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!activeSessionId) return;
+    setFileContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      file,
+    });
+  };
+
+  const handleOpenWithDefault = async () => {
+    const targetFile = fileContextMenu?.file;
+    setFileContextMenu(null); // Always close on click
+    if (!targetFile?.storedPath) {
+      logUiError('file.openPath', new Error('No physical path stored for this file'), { file: targetFile?.name });
+      return;
+    }
+    try {
+      if (window.hihangul && window.hihangul.openPath) {
+        await window.hihangul.openPath(targetFile.storedPath);
+      } else {
+        throw new Error('window.hihangul.openPath is not available. Please restart the Electron main process.');
+      }
+    } catch (e) {
+      logUiError('file.openPath', e, { path: targetFile.storedPath });
+    }
   };
 
   const handleNavigateSession = (sessionId: string) => {
@@ -1216,10 +1255,10 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
           prev.map((row) =>
             row.id === id
               ? {
-                  ...row,
-                  preview: '실행이 완료되었습니다. 결과물을 확인해주세요.',
-                  messages: [...row.messages, { id: makeId('msg'), sender: 'ai', text: '실행이 완료되었습니다. 결과물을 확인해주세요.', timestamp: 'Now' }],
-                }
+                ...row,
+                preview: '실행이 완료되었습니다. 결과물을 확인해주세요.',
+                messages: [...row.messages, { id: makeId('msg'), sender: 'ai', text: '실행이 완료되었습니다. 결과물을 확인해주세요.', timestamp: 'Now' }],
+              }
               : row,
           ),
         );
@@ -1419,18 +1458,18 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
     const profileId = provider === 'codex' ? 'codex-default' : 'claude-default';
     const body: Record<string, unknown> = provider === 'codex'
       ? {
-          profile_id: profileId,
-          provider: 'codex',
-          auth_mode: 'codex_cli',
-          metadata: { source: 'windows-ui' },
-        }
+        profile_id: profileId,
+        provider: 'codex',
+        auth_mode: 'codex_cli',
+        metadata: { source: 'windows-ui' },
+      }
       : {
-          profile_id: profileId,
-          provider: 'claude',
-          auth_mode: 'token',
-          token: window.localStorage.getItem('hihangul.claude.token') || '',
-          metadata: { source: 'windows-ui' },
-        };
+        profile_id: profileId,
+        provider: 'claude',
+        auth_mode: 'token',
+        token: window.localStorage.getItem('hihangul.claude.token') || '',
+        metadata: { source: 'windows-ui' },
+      };
     const resp = await fetch(`${window.hihangul.brainBaseUrl}/v1/auth/profiles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1494,17 +1533,17 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       const ext = outputName.includes('.') ? outputName.split('.').pop()?.toLowerCase() : 'hwpx';
       const childFile: WorkspaceFile | null = outputPath
         ? {
-            id: makeId('file'),
-            name: outputName,
-            size: 'unknown',
-            type: ext || 'hwpx',
-            date: 'Just now',
-            uploadedAt: Date.now(),
-            lineageKey: activeFile.lineageKey || buildLineageKey(activeFile.name),
-            parentFileId: activeFile.id,
-            storedPath: outputPath,
-            sessionDir: typeof data.session_dir === 'string' ? data.session_dir : activeFile.sessionDir,
-          }
+          id: makeId('file'),
+          name: outputName,
+          size: 'unknown',
+          type: ext || 'hwpx',
+          date: 'Just now',
+          uploadedAt: Date.now(),
+          lineageKey: activeFile.lineageKey || buildLineageKey(activeFile.name),
+          parentFileId: activeFile.id,
+          storedPath: outputPath,
+          sessionDir: typeof data.session_dir === 'string' ? data.session_dir : activeFile.sessionDir,
+        }
         : null;
 
       updateActiveSession((session) => ({
@@ -1797,9 +1836,8 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                   event.preventDefault();
                   setContextMenu({ x: event.clientX, y: event.clientY, sessionId: session.id });
                 }}
-                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center gap-3 transition-colors ${
-                  activeSessionId === session.id && currentView === 'workspace' ? 'bg-slate-800 text-white border-l-2 border-blue-500' : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center gap-3 transition-colors ${activeSessionId === session.id && currentView === 'workspace' ? 'bg-slate-800 text-white border-l-2 border-blue-500' : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
                 type="button"
               >
                 <MessageSquare className="w-4 h-4 opacity-70" />
@@ -1867,9 +1905,8 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
               <button
                 onClick={() => setDiffMode(!diffMode)}
                 disabled={!activeFile}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  diffMode ? 'bg-indigo-50 text-indigo-600 border border-indigo-200' : 'text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed'
-                }`}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${diffMode ? 'bg-indigo-50 text-indigo-600 border border-indigo-200' : 'text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
                 type="button"
               >
                 <ArrowRightLeft className="w-4 h-4" />
@@ -1955,6 +1992,7 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                   files={fileList}
                   activeFileId={activeFile?.id}
                   onSelect={handleFileSelect}
+                  onContextMenu={handleFileContextMenu}
                   onUploadClick={openFileDialog}
                   loading={isFileLoading}
                 />
@@ -2020,17 +2058,17 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                             if (bothPdf) {
                               const changedBboxes: PdfHighlightBox[] = diffRichData
                                 ? diffRichData.resultBlocks
-                                    .map((block, idx) => {
-                                      if (!diffRichData.changedBlockIndexes.has(idx) || !block.bbox) return null;
-                                      return {
-                                        page: block.bbox.page,
-                                        x: block.bbox.x,
-                                        y: block.bbox.y,
-                                        w: block.bbox.w,
-                                        h: block.bbox.h,
-                                      };
-                                    })
-                                    .filter(Boolean) as PdfHighlightBox[]
+                                  .map((block, idx) => {
+                                    if (!diffRichData.changedBlockIndexes.has(idx) || !block.bbox) return null;
+                                    return {
+                                      page: block.bbox.page,
+                                      x: block.bbox.x,
+                                      y: block.bbox.y,
+                                      w: block.bbox.w,
+                                      h: block.bbox.h,
+                                    };
+                                  })
+                                  .filter(Boolean) as PdfHighlightBox[]
                                 : [];
                               return (
                                 <>
@@ -2269,6 +2307,22 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
         </div>
       ) : null}
 
+      {fileContextMenu ? (
+        <div
+          className="fixed z-[100] bg-white border border-slate-200 rounded-lg shadow-xl p-1 w-48 text-sm text-slate-700"
+          style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors"
+            onClick={handleOpenWithDefault}
+            type="button"
+          >
+            {isHwpFamily(fileContextMenu.file) ? '한글로 열기' : '기본 프로그램으로 열기'}
+          </button>
+        </div>
+      ) : null}
+
       <SaveLogicModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} onSave={() => logUi('launcher.save', 'saved current logic')} />
 
       <input ref={hiddenFileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileChosen} />
@@ -2316,10 +2370,10 @@ export default function App() {
 }
 
 export { App };
-    const getLocalCodexStatus = async (): Promise<{ ok: boolean; cliFound: boolean; loggedIn: boolean; message: string }> => {
-      const fn = (window.hihangul as any).getCodexLoginStatusLocal;
-      if (typeof fn !== 'function') {
-        return { ok: false, cliFound: false, loggedIn: false, message: 'local status bridge unavailable' };
-      }
-      return fn();
-    };
+const getLocalCodexStatus = async (): Promise<{ ok: boolean; cliFound: boolean; loggedIn: boolean; message: string }> => {
+  const fn = (window.hihangul as any).getCodexLoginStatusLocal;
+  if (typeof fn !== 'function') {
+    return { ok: false, cliFound: false, loggedIn: false, message: 'local status bridge unavailable' };
+  }
+  return fn();
+};

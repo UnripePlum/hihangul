@@ -18,5 +18,6 @@ const api = {
     saveSessions: (payload) => electron_1.ipcRenderer.invoke("session:save", payload),
     saveSessionUpload: (payload) => electron_1.ipcRenderer.invoke("file:save-session-upload", payload),
     getNextResultPath: (payload) => electron_1.ipcRenderer.invoke("file:next-result-path", payload),
+    openPath: (filePath) => electron_1.ipcRenderer.invoke("file:open-path", filePath),
 };
 electron_1.contextBridge.exposeInMainWorld("hihangul", api);
