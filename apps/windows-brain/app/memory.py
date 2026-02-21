@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import struct
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from .embedder import Embedder
+
+def serialize_f32(vector: list[float]) -> bytes:
+    """serializes a list of floats into a compact 'raw bytes' format"""
+    return struct.pack("%sf" % len(vector), *vector)
 
 @dataclass
 class HybridMemory:
@@ -15,10 +23,21 @@ class HybridMemory:
         self.md_path = self.root_dir / "knowledge.md"
         self.log_path = self.root_dir / "events.jsonl"
         self.db_path = self.root_dir / "vector.db"
+        
+        self.embedder = Embedder()
         self._init_sqlite()
 
     def _init_sqlite(self) -> None:
         conn = sqlite3.connect(self.db_path)
+        try:
+            import sqlite_vec
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(embedding float[1024])")
+            self._has_vec = True
+        except Exception:
+            self._has_vec = False
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_index (id INTEGER PRIMARY KEY, key TEXT, value TEXT)"
         )
@@ -58,12 +77,29 @@ class HybridMemory:
             f.write(text.strip() + "\n")
 
     def append_log(self, payload: dict) -> None:
+        record = dict(payload)
+        record.setdefault("event_id", str(uuid4()))
+        record.setdefault("created_at", datetime.now(timezone.utc).isoformat())
         with self.log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def upsert_index(self, key: str, value: str) -> None:
         conn = sqlite3.connect(self.db_path)
-        conn.execute("INSERT INTO memory_index(key, value) VALUES (?, ?)", (key, value))
+        if self._has_vec:
+            import sqlite_vec
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+
+        cursor = conn.execute("INSERT INTO memory_index(key, value) VALUES (?, ?)", (key, value))
+        
+        if self._has_vec:
+            # Generate embedding and store it in vec_memory using the generated row id
+            emb = self.embedder.get_embedding(value)
+            conn.execute(
+                "INSERT INTO vec_memory(rowid, embedding) VALUES (?, ?)", 
+                (cursor.lastrowid, serialize_f32(emb))
+            )
+            
         conn.commit()
         conn.close()
 
@@ -75,10 +111,30 @@ class HybridMemory:
 
     def search_index(self, keyword: str, limit: int = 5) -> list[str]:
         conn = sqlite3.connect(self.db_path)
-        rows = conn.execute(
-            "SELECT value FROM memory_index WHERE value LIKE ? ORDER BY id DESC LIMIT ?",
-            (f"%{keyword}%", limit),
-        ).fetchall()
+        
+        if self._has_vec:
+            import sqlite_vec
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            
+            emb = self.embedder.get_embedding(keyword)
+            # Use cosine distance full scan + limit, suitable for small to mid size local databases.
+            rows = conn.execute(
+                """
+                SELECT m.value 
+                FROM vec_memory v 
+                JOIN memory_index m ON m.id = v.rowid 
+                ORDER BY vec_distance_cosine(v.embedding, ?) 
+                LIMIT ?
+                """,
+                (serialize_f32(emb), limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT value FROM memory_index WHERE value LIKE ? ORDER BY id DESC LIMIT ?",
+                (f"%{keyword}%", limit),
+            ).fetchall()
+            
         conn.close()
         return [row[0] for row in rows]
 
