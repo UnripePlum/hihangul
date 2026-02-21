@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -440,6 +440,21 @@ app.whenReady().then(() => {
       }
     },
   );
+
+  ipcMain.handle("file:open-path", async (_event, filePath: string) => {
+    try {
+      if (!filePath) {
+        return { ok: false, message: "No file path provided" };
+      }
+      const err = await shell.openPath(filePath);
+      if (err) {
+        return { ok: false, message: err };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  });
 
   ipcMain.handle("system:get-host-user", async () => {
     try {

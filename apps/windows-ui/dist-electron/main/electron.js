@@ -394,6 +394,21 @@ electron_1.app.whenReady().then(() => {
             return { ok: false, message: error.message };
         }
     });
+    electron_1.ipcMain.handle("file:open-path", async (_event, filePath) => {
+        try {
+            if (!filePath) {
+                return { ok: false, message: "No file path provided" };
+            }
+            const err = await electron_1.shell.openPath(filePath);
+            if (err) {
+                return { ok: false, message: err };
+            }
+            return { ok: true };
+        }
+        catch (error) {
+            return { ok: false, message: error.message };
+        }
+    });
     electron_1.ipcMain.handle("system:get-host-user", async () => {
         try {
             const info = node_os_1.default.userInfo();
