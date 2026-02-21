@@ -26,6 +26,21 @@ packager = ProgramPackager(
 )
 
 
+def _read_supported_doc(path_text: str, max_size: int) -> tuple[str, bytes]:
+    doc_path = Path(path_text)
+    if not doc_path.exists():
+        raise HTTPException(status_code=404, detail=f"file not found: {doc_path}")
+    if not doc_path.is_file():
+        raise HTTPException(status_code=400, detail="path must point to a file")
+    ext = doc_path.suffix.lower().lstrip(".")
+    if ext not in {"hwp", "hwpx"}:
+        raise HTTPException(status_code=400, detail="only .hwp and .hwpx are supported")
+    raw = doc_path.read_bytes()
+    if len(raw) > max_size:
+        raise HTTPException(status_code=413, detail=f"file too large (max {max_size // (1024 * 1024)}MB)")
+    return doc_path.name, raw
+
+
 @app.on_event("startup")
 async def startup_warmup() -> None:
     try:
@@ -134,6 +149,59 @@ async def render_pdf(file: UploadFile) -> Response:
         raise HTTPException(status_code=500, detail=f"engine render failed: {exc}") from exc
 
     safe_name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in Path(file.filename).stem)
+    if not safe_name:
+        safe_name = "preview"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{safe_name}.pdf"'},
+    )
+
+
+@app.post("/v1/viewer/preview-from-path")
+async def preview_document_from_path(req: dict) -> dict:
+    path_text = str(req.get("path") or "").strip()
+    layout_mode = str(req.get("layout_mode") or "approx").strip()
+    if not path_text:
+        raise HTTPException(status_code=400, detail="path is required")
+    if layout_mode not in {"approx", "precise"}:
+        raise HTTPException(status_code=400, detail="layout_mode must be one of: approx, precise")
+
+    file_name, raw = _read_supported_doc(path_text, max_size=25 * 1024 * 1024)
+    try:
+        preview = build_document_preview(
+            file_name,
+            raw,
+            layout_mode=layout_mode,
+            render_pdf=render_to_pdf_via_hwp_engine,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"preview extraction failed: {exc}") from exc
+
+    return {
+        "ok": True,
+        "file_name": file_name,
+        "preview": preview,
+    }
+
+
+@app.post("/v1/viewer/render-pdf-from-path")
+async def render_pdf_from_path(req: dict) -> Response:
+    path_text = str(req.get("path") or "").strip()
+    if not path_text:
+        raise HTTPException(status_code=400, detail="path is required")
+    file_name, raw = _read_supported_doc(path_text, max_size=40 * 1024 * 1024)
+
+    try:
+        pdf_bytes = render_to_pdf_via_hwp_engine(file_name, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"engine render failed: {exc}") from exc
+
+    safe_name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in Path(file_name).stem)
     if not safe_name:
         safe_name = "preview"
     return Response(

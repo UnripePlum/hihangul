@@ -18,6 +18,9 @@ class LaneQueueManager:
         self._queues: dict[str, asyncio.Queue[LaneTask]] = defaultdict(asyncio.Queue)
         self._workers_started: set[str] = set()
         self._active_session_by_lane: dict[str, str | None] = defaultdict(lambda: None)
+        self._processed_count_by_lane: dict[str, int] = defaultdict(int)
+        self._failed_count_by_lane: dict[str, int] = defaultdict(int)
+        self._last_error_by_lane: dict[str, str | None] = defaultdict(lambda: None)
 
     async def enqueue(self, lane_id: str, task: LaneTask, worker_cb) -> Any:
         queue = self._queues[lane_id]
@@ -34,6 +37,9 @@ class LaneQueueManager:
             "queued_tasks": queue.qsize(),
             "worker_started": lane_id in self._workers_started,
             "active_session_id": self._active_session_by_lane.get(lane_id),
+            "processed_tasks": self._processed_count_by_lane[lane_id],
+            "failed_tasks": self._failed_count_by_lane[lane_id],
+            "last_error": self._last_error_by_lane[lane_id],
         }
 
     def all_lane_statuses(self) -> list[dict[str, Any]]:
@@ -46,8 +52,12 @@ class LaneQueueManager:
             self._active_session_by_lane[lane_id] = task.session_id
             try:
                 result = await worker_cb(lane_id, task.payload)
+                self._processed_count_by_lane[lane_id] += 1
+                self._last_error_by_lane[lane_id] = None
                 task.future.set_result(result)
             except Exception as exc:  # noqa: BLE001
+                self._failed_count_by_lane[lane_id] += 1
+                self._last_error_by_lane[lane_id] = str(exc)
                 task.future.set_exception(exc)
             finally:
                 self._active_session_by_lane[lane_id] = None

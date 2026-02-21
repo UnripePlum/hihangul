@@ -31,21 +31,26 @@ Follow these exact steps to set up the new branch environment:
    cd <TARGET_DIR>
    git checkout -b <BRANCH_NAME>
 
-   # 4. Open the new directory in a new Antigravity/Cursor/Codex IDE window
-   # Use the appropriate CLI command for your editor, e.g., 'cursor .' or 'code .'
-   cursor .
+   # 4. Create an AGENT_PROMPT.md with the rule and task context
+   cat << 'EOF' > AGENT_PROMPT.md
+   # Rule Context
+   <Insert Rule Context Here>
+
+   # Task Description
+   <Insert Task Description Here>
+   EOF
+
+   # 5. Open the new directory and the prompt file in the current IDE window
+   if [ -n "$GIT_ASKPASS" ]; then
+     open -a "${GIT_ASKPASS%%.app/*}.app" . AGENT_PROMPT.md
+   else
+     code . AGENT_PROMPT.md # Fallback
+   fi
    ```
 
-3. **Initialize the Codex Agent with Rules and Task:**
-   - In the **newly opened IDE window**, launch the Codex (or Antigravity) agent.
-   - **Immediately** instruct the new agent with two things:
-     1. **The Rule Context**:
-       - If `brain`: "Read and strictly apply `.agents/rules/windows-brain.md`"
-       - If `agent`: "Read and strictly apply `.agents/rules/windows-agent.md`" (if it exists)
-       - If `ui`: "Read and strictly apply `.agents/rules/windows-ui.md`" (if it exists)
-       - If `other`: No strict architectural rules apply.
-     2. **The Task Description**:
-       - Provide the exact work/task description requested by the User so the new agent knows exactly what to do from the start.
+3. **Initialize the Codex Agent with the Prompt:**
+   - The IDE will open the new project and automatically display `AGENT_PROMPT.md`.
+   - The user (or the agent if possible) can simply copy the contents of `AGENT_PROMPT.md` into the new AI chat session.
 
 4. **Notify the User:**
    - Use the `notify_user` tool in the CURRENT window to let the user know that the new project has been spawned, the branch is ready, and they should switch to the new window.

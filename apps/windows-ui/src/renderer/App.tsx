@@ -42,6 +42,8 @@ type WorkspaceFile = {
   parentFileId?: string | null;
   compareText?: string;
   compareLineTokens?: string[];
+  storedPath?: string;
+  sessionDir?: string;
 };
 type RichRun = { text: string; font_size_px: number; bold: boolean; font_family?: string };
 type BlockBBox = { page: number; x: number; y: number; w: number; h: number; unit?: string; source?: string };
@@ -389,6 +391,29 @@ function laneNumberFromSessionId(sessionId: string): number {
   return Math.abs(hash % 900) + 100;
 }
 
+function normalizeWorkspaceFile(raw: any, index: number): WorkspaceFile {
+  const name = typeof raw?.name === 'string' && raw.name.trim() ? raw.name : `file-${index}`;
+  const ext = name.includes('.') ? name.split('.').pop()?.toLowerCase() || 'other' : 'other';
+  const lineTokens = Array.isArray(raw?.compareLineTokens)
+    ? raw.compareLineTokens.filter((it: unknown) => typeof it === 'string')
+    : [];
+  return {
+    id: typeof raw?.id === 'string' && raw.id ? raw.id : makeId(`file-${index}`),
+    name,
+    size: typeof raw?.size === 'string' ? raw.size : 'Unknown',
+    type: typeof raw?.type === 'string' && raw.type ? raw.type : ext,
+    date: typeof raw?.date === 'string' ? raw.date : 'Unknown',
+    mime: typeof raw?.mime === 'string' ? raw.mime : undefined,
+    uploadedAt: typeof raw?.uploadedAt === 'number' ? raw.uploadedAt : Date.now() + index,
+    lineageKey: typeof raw?.lineageKey === 'string' ? raw.lineageKey : buildLineageKey(name),
+    parentFileId: typeof raw?.parentFileId === 'string' && raw.parentFileId ? raw.parentFileId : null,
+    compareText: typeof raw?.compareText === 'string' ? raw.compareText : undefined,
+    compareLineTokens: lineTokens,
+    storedPath: typeof raw?.storedPath === 'string' ? raw.storedPath : undefined,
+    sessionDir: typeof raw?.sessionDir === 'string' ? raw.sessionDir : undefined,
+  };
+}
+
 function toUiSession(raw: any, idx: number): UiSession {
   const messages: ChatMessage[] = Array.isArray(raw?.messages)
     ? raw.messages.map((m: any, mi: number) => ({
@@ -399,14 +424,20 @@ function toUiSession(raw: any, idx: number): UiSession {
       }))
     : [DEFAULT_MESSAGE];
 
+  const files: WorkspaceFile[] = Array.isArray(raw?.files)
+    ? raw.files.filter((it: unknown) => it && typeof it === 'object').map((it: any, fi: number) => normalizeWorkspaceFile(it, fi))
+    : [];
+  const rawActiveFileId = typeof raw?.activeFileId === 'string' ? raw.activeFileId : null;
+  const activeFileId = rawActiveFileId && files.some((f) => f.id === rawActiveFileId) ? rawActiveFileId : (files[0]?.id || null);
+
   return {
     id: typeof raw?.id === 'string' ? raw.id : `session-${idx}`,
     title: typeof raw?.title === 'string' && raw.title ? raw.title : '새 세션',
     date: new Date(typeof raw?.updatedAt === 'number' ? raw.updatedAt : Date.now()).toISOString().slice(0, 10),
     preview: messages[messages.length - 1]?.text?.slice(0, 60) || '대화 없음',
     messages,
-    files: Array.isArray(raw?.files) ? raw.files : [],
-    activeFileId: typeof raw?.activeFileId === 'string' ? raw.activeFileId : null,
+    files,
+    activeFileId,
   };
 }
 
@@ -431,16 +462,147 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
   const [status, setStatus] = useState<'idle' | 'connecting' | 'ready' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState('');
 
-  const waitForRuntimeReady = async (intervalMs: number = 1500): Promise<void> => {
+  const waitForRuntimeReady = async (intervalMs: number = 1500, timeoutMs: number = 120000): Promise<void> => {
+    const startedAt = Date.now();
+    let lastBrainOk = false;
+    let lastAgentOk = false;
     while (true) {
       const [brainOk, agentOk] = await Promise.all([
         fetch(`${window.hihangul.brainBaseUrl}/health`).then((r) => r.ok).catch(() => false),
         fetch(`${window.hihangul.agentBaseUrl}/health`).then((r) => r.ok).catch(() => false),
       ]);
+      lastBrainOk = brainOk;
+      lastAgentOk = agentOk;
       if (brainOk && agentOk) return;
       setStatusMessage(`서비스 대기 중... Brain(${brainOk ? 'ok' : 'x'}) Agent(${agentOk ? 'ok' : 'x'})`);
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`런타임 준비 시간 초과: Brain(${lastBrainOk ? 'ok' : 'x'}) Agent(${lastAgentOk ? 'ok' : 'x'})`);
+      }
       await new Promise((r) => window.setTimeout(r, intervalMs));
     }
+  };
+
+  const fetchJsonWithTimeout = async (url: string, init: RequestInit = {}, timeoutMs: number = 12000): Promise<any> => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { ...init, signal: controller.signal });
+      const raw = await resp.text().catch(() => '');
+      const data = raw ? JSON.parse(raw) : {};
+      if (!resp.ok) {
+        throw new Error(data?.detail ? JSON.stringify(data.detail) : raw || String(resp.status));
+      }
+      return data;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  const upsertAuthProfile = async (body: Record<string, unknown>): Promise<void> => {
+    await fetchJsonWithTimeout(
+      `${window.hihangul.brainBaseUrl}/v1/auth/profiles`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      15000,
+    );
+  };
+
+  const ensureCodexIntegrated = async (): Promise<void> => {
+    setStatusMessage('Codex CLI 설치/확인 중...');
+    const cli = await window.hihangul.ensureProviderCli('codex');
+    if (!cli?.ok) {
+      throw new Error(cli?.message || 'codex CLI 준비 실패');
+    }
+
+    setStatusMessage('Codex 로그인 상태 확인 중...');
+    const checkStatus = async (): Promise<{ cli_found: boolean; login_required: boolean; message: string }> => {
+      return fetchJsonWithTimeout(`${window.hihangul.brainBaseUrl}/v1/auth/codex/status`, {}, 10000);
+    };
+
+    let statusData = await checkStatus();
+    let localStatus = await getLocalCodexStatus().catch(() => ({
+      ok: false,
+      cliFound: false,
+      loggedIn: false,
+      message: 'local status unavailable',
+    }));
+    if (!statusData.cli_found) {
+      throw new Error(statusData.message || 'Codex CLI를 찾을 수 없습니다.');
+    }
+    if (statusData.login_required && !localStatus.loggedIn) {
+      setStatusMessage('Codex 로그인 진행 중... 브라우저/터미널 인증을 완료하세요.');
+      const login = await window.hihangul.launchCodexLogin();
+      if (!login?.launched) {
+        throw new Error(login?.message || 'codex login 실행 실패');
+      }
+      const started = Date.now();
+      while (Date.now() - started < 240000) {
+        await new Promise((r) => window.setTimeout(r, 2000));
+        statusData = await checkStatus();
+        localStatus = await getLocalCodexStatus().catch(() => ({
+          ok: false,
+          cliFound: false,
+          loggedIn: false,
+          message: 'local status unavailable',
+        }));
+        setStatusMessage(
+          `Codex 로그인 확인 중... Brain(${statusData.login_required ? 'pending' : 'ok'}) Local(${localStatus.loggedIn ? 'ok' : 'pending'})`,
+        );
+        if ((statusData.cli_found && !statusData.login_required) || localStatus.loggedIn) {
+          break;
+        }
+      }
+      if (statusData.login_required && !localStatus.loggedIn) {
+        throw new Error(`${statusData.message || 'codex 로그인 미완료'} / local=${localStatus.message}`);
+      }
+      await window.hihangul.postCodexLoginFocus().catch(() => ({ ok: false }));
+    }
+
+    setStatusMessage('Codex 프로필 등록 중...');
+    await upsertAuthProfile({
+      profile_id: 'codex-default',
+      provider: 'codex',
+      auth_mode: 'codex_cli',
+      metadata: { source: 'auth-screen' },
+    });
+  };
+
+  const ensureClaudeIntegrated = async (): Promise<void> => {
+    setStatusMessage('Claude CLI 설치/확인 중...');
+    const cli = await window.hihangul.ensureProviderCli('claude');
+    if (!cli?.ok) {
+      throw new Error(cli?.message || 'claude CLI 준비 실패');
+    }
+
+    let token = (window.localStorage.getItem('hihangul.claude.token') || '').trim();
+    if (!token) {
+      const input = window.prompt('Claude API Token을 입력하세요 (저장됨):', '');
+      token = (input || '').trim();
+      if (!token) {
+        throw new Error('Claude token이 필요합니다.');
+      }
+      window.localStorage.setItem('hihangul.claude.token', token);
+    }
+
+    setStatusMessage('Claude 프로필 등록/검증 중...');
+    await upsertAuthProfile({
+      profile_id: 'claude-default',
+      provider: 'claude',
+      auth_mode: 'token',
+      token,
+      metadata: { source: 'auth-screen' },
+    });
+  };
+
+  const ensureProviderIntegrated = async (provider: Provider): Promise<void> => {
+    if (provider === 'codex') {
+      await ensureCodexIntegrated();
+      return;
+    }
+    await ensureClaudeIntegrated();
   };
 
   const handleConnect = async () => {
@@ -448,11 +610,18 @@ const AuthScreen = ({ onLogin }: { onLogin: (provider: Provider) => Promise<void
     try {
       setIsConnecting(true);
       setStatus('connecting');
-      setStatusMessage('Windows 런타임(Brain/Agent) 상태를 확인하는 중...');
+      setStatusMessage('런타임 준비 상태를 확인합니다...');
       await waitForRuntimeReady();
+
+      setStatusMessage('런타임 준비 완료. Provider 연동 상태를 확인합니다...');
+      await ensureProviderIntegrated(selectedModel);
+
       setStatus('ready');
-      setStatusMessage('런타임 준비 완료. 워크스페이스로 진입합니다.');
-      await onLogin(selectedModel);
+      setStatusMessage('런타임 준비 + Provider 연동 완료. 워크스페이스로 진입합니다.');
+      await Promise.race([
+        onLogin(selectedModel),
+        new Promise((_, reject) => window.setTimeout(() => reject(new Error('워크스페이스 진입 타임아웃')), 15000)),
+      ]);
     } catch (error) {
       logUiError('auth.connect', error, { selectedModel });
       setStatus('error');
@@ -870,7 +1039,7 @@ const PdfOverlayViewer = ({
   );
 };
 
-const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersion: string }) => {
+const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string; appVersion: string; provider: Provider }) => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'workspace'>('dashboard');
   const [sessions, setSessions] = useState<UiSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -1166,13 +1335,116 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
     return { kind: 'none', note: '이 파일 형식은 현재 미리보기를 지원하지 않습니다.' };
   };
 
+  const buildPreviewForStoredPath = async (fileMeta: WorkspaceFile): Promise<FilePreview> => {
+    const ext = getFileExt(fileMeta.name);
+    if (!(ext === 'hwp' || ext === 'hwpx') || !fileMeta.storedPath) {
+      return { kind: 'none', note: '저장 경로 기반 미리보기를 지원하지 않는 파일입니다.' };
+    }
+
+    const fetchComparablePreview = async (): Promise<{ rich?: FilePreview; text?: FilePreview; detail?: string }> => {
+      const res = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/preview-from-path`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: fileMeta.storedPath, layout_mode: 'precise' }),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        return { detail: detail || String(res.status) };
+      }
+      const data = await res.json();
+      const preview = data?.preview;
+      if (preview?.kind === 'rich' && Array.isArray(preview.blocks)) {
+        const content = typeof preview.content === 'string' ? preview.content : '';
+        const lines = richBlocksToComparableLines(preview.blocks);
+        const compareLineTokens = lines.map((line) => `${line.text}\u241F${line.styleKey}`);
+        return {
+          rich: {
+            kind: 'rich',
+            blocks: preview.blocks,
+            content,
+            truncated: !!preview.truncated,
+            compareText: content,
+            compareLineTokens,
+          },
+        };
+      }
+      if (preview?.kind === 'text' && typeof preview.content === 'string') {
+        const lines = splitLines(preview.content);
+        const compareLineTokens = lines.map((line) => `${line.text}\u241F${line.styleKey}`);
+        return {
+          text: {
+            kind: 'text',
+            content: preview.content,
+            truncated: !!preview.truncated,
+            compareText: preview.content,
+            compareLineTokens,
+          },
+        };
+      }
+      return { detail: 'HWP/HWPX 미리보기 결과를 해석할 수 없습니다.' };
+    };
+
+    try {
+      const pdfRes = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/render-pdf-from-path`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: fileMeta.storedPath }),
+      });
+      if (pdfRes.ok) {
+        const pdfBlob = await pdfRes.blob();
+        const compare = await fetchComparablePreview().catch(() => ({}));
+        const compareText = compare.rich?.compareText || compare.text?.compareText;
+        const compareLineTokens = compare.rich?.compareLineTokens || compare.text?.compareLineTokens;
+        const richBlocks = compare.rich?.kind === 'rich' ? compare.rich.blocks : undefined;
+        return { kind: 'pdf', url: URL.createObjectURL(pdfBlob), compareText, compareLineTokens, richBlocks };
+      }
+      const renderDetail = await pdfRes.text().catch(() => '');
+      const compare = await fetchComparablePreview().catch(() => ({}));
+      if (compare.rich) return compare.rich;
+      if (compare.text) return compare.text;
+      const detail = compare.detail || renderDetail || 'unknown error';
+      return { kind: 'none', note: `경로 기반 HWP 미리보기 생성 실패: ${detail}` };
+    } catch (error) {
+      logUiError('file.preview.path', error, { file: fileMeta.name, storedPath: fileMeta.storedPath });
+      return { kind: 'none', note: '경로 기반 미리보기 요청 실패: windows-agent 연결 상태를 확인하세요.' };
+    }
+  };
+
   const handleGoHome = () => {
     setCurrentView('dashboard');
     setActiveSessionId(null);
   };
 
-  const handleSendMessage = () => {
-    if (!inputText.trim() || !activeSessionId) return;
+  const ensureProviderProfile = async (): Promise<string> => {
+    const profileId = provider === 'codex' ? 'codex-default' : 'claude-default';
+    const body: Record<string, unknown> = provider === 'codex'
+      ? {
+          profile_id: profileId,
+          provider: 'codex',
+          auth_mode: 'codex_cli',
+          metadata: { source: 'windows-ui' },
+        }
+      : {
+          profile_id: profileId,
+          provider: 'claude',
+          auth_mode: 'token',
+          token: window.localStorage.getItem('hihangul.claude.token') || '',
+          metadata: { source: 'windows-ui' },
+        };
+    const resp = await fetch(`${window.hihangul.brainBaseUrl}/v1/auth/profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => '');
+      throw new Error(`auth profile failed: ${detail || resp.status}`);
+    }
+    return profileId;
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputText.trim() || !activeSessionId || !activeFile) return;
     const value = inputText.trim();
     setInputText('');
     setIsProcessing(true);
@@ -1182,23 +1454,92 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
       messages: [...session.messages, { id: makeId('msg'), sender: 'user', text: value, timestamp: 'Now' }],
     }));
 
-    window.setTimeout(() => {
-      setIsProcessing(false);
-      setDiffMode(true);
+    try {
+      const profileId = await ensureProviderProfile();
+      const sourcePath = activeFile.storedPath || '';
+      if (!sourcePath) {
+        throw new Error('선택한 파일의 저장 경로가 없습니다. 파일을 다시 업로드해주세요.');
+      }
+
+      const hwpxInject = activeFile.type === 'hwpx'
+        ? '대상 파일은 HWPX입니다. 반드시 Python run(controller) 프로그램으로 생성하고 즉시 실행하세요. 원본은 유지하고 결과는 복사본으로 저장하세요.'
+        : '';
+      const reqBody = {
+        session_id: activeSessionId,
+        user_id: hostUserName || 'user',
+        auth_token: 'hk_local_ui',
+        user_input: hwpxInject ? `${hwpxInject}\n사용자 요청: ${value}` : value,
+        adapter: 'pyhwpx',
+        provider,
+        profile_id: profileId,
+        source_file_name: activeFile.name,
+        source_file_path: sourcePath,
+        persist_program: false,
+        dry_run: false,
+      };
+
+      const res = await fetch(`${window.hihangul.brainBaseUrl}/v1/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqBody),
+      });
+      const raw = await res.text();
+      const data = raw ? JSON.parse(raw) : {};
+      if (!res.ok) {
+        throw new Error(data?.detail ? JSON.stringify(data.detail) : raw || String(res.status));
+      }
+
+      const outputPath = typeof data.output_file_path === 'string' ? data.output_file_path : '';
+      const outputName = outputPath ? outputPath.split(/[\\/]/).pop() || 'result.hwpx' : '';
+      const ext = outputName.includes('.') ? outputName.split('.').pop()?.toLowerCase() : 'hwpx';
+      const childFile: WorkspaceFile | null = outputPath
+        ? {
+            id: makeId('file'),
+            name: outputName,
+            size: 'unknown',
+            type: ext || 'hwpx',
+            date: 'Just now',
+            uploadedAt: Date.now(),
+            lineageKey: activeFile.lineageKey || buildLineageKey(activeFile.name),
+            parentFileId: activeFile.id,
+            storedPath: outputPath,
+            sessionDir: typeof data.session_dir === 'string' ? data.session_dir : activeFile.sessionDir,
+          }
+        : null;
+
       updateActiveSession((session) => ({
         ...session,
-        preview: '요청하신 작업을 완료했습니다.',
+        files: childFile ? [...session.files, childFile] : session.files,
+        activeFileId: childFile ? childFile.id : session.activeFileId,
+        preview: '요청한 자동화를 실행했습니다.',
         messages: [
           ...session.messages,
           {
             id: makeId('msg'),
             sender: 'ai',
-            text: '요청하신대로 표의 테두리 스타일을 변경했습니다. 우측 미리보기에서 변경 사항(Diff)을 확인해주세요.',
+            text: `실행 완료(run_id=${data.run_id || 'unknown'}). 결과 파일: ${outputPath || 'N/A'}`,
             timestamp: 'Now',
           },
         ],
       }));
-    }, 1200);
+      setDiffMode(true);
+    } catch (error) {
+      logUiError('chat.send', error, { provider });
+      updateActiveSession((session) => ({
+        ...session,
+        messages: [
+          ...session.messages,
+          {
+            id: makeId('msg'),
+            sender: 'ai',
+            text: `실행 실패: ${(error as Error).message || 'unknown error'}`,
+            timestamp: 'Now',
+          },
+        ],
+      }));
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const openFileDialog = () => {
@@ -1211,19 +1552,42 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
       if (!picked.length || !activeSessionId) return;
       setIsFileLoading(true);
 
+      const persisted = await Promise.all(
+        picked.map(async (file) => {
+          const form = new FormData();
+          form.append('session_id', activeSessionId);
+          form.append('user_id', hostUserName || 'user');
+          form.append('file', file, file.name);
+          const resp = await fetch(`${window.hihangul.brainBaseUrl}/v1/files/upload`, {
+            method: 'POST',
+            body: form,
+          });
+          const raw = await resp.text();
+          const saved = raw ? JSON.parse(raw) : {};
+          if (!resp.ok || !saved?.ok || !saved.stored_path || !saved.stored_file_name) {
+            throw new Error(saved?.detail || saved?.message || `failed to persist upload: ${file.name}`);
+          }
+          return saved;
+        }),
+      );
+
       const now = Date.now();
       const mapped: WorkspaceFile[] = picked.map((file, index) => {
-        const ext = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : 'other';
+        const persistedItem = persisted[index];
+        const finalName = persistedItem.stored_file_name || file.name;
+        const ext = finalName.includes('.') ? finalName.split('.').pop()?.toLowerCase() : 'other';
         const sizeMb = file.size / (1024 * 1024);
         const size = sizeMb >= 1 ? `${sizeMb.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
         return {
           id: makeId('file'),
-          name: file.name,
+          name: finalName,
           size,
           type: ext || 'other',
           date: 'Just now',
           mime: file.type || 'application/octet-stream',
           uploadedAt: now + index,
+          storedPath: persistedItem.stored_path,
+          sessionDir: persistedItem.session_dir,
         };
       });
 
@@ -1264,7 +1628,15 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
         files: [...session.files, ...withComparable],
         activeFileId: withComparable[0]?.id ?? session.activeFileId,
         preview: `파일 ${withComparable[0]?.name ?? ''} 업로드 완료`,
-        messages: [...session.messages, { id: makeId('msg'), sender: 'ai', text: `파일(${withComparable[0]?.name})이 업로드되었습니다. 문서 구조 분석을 완료했습니다.`, timestamp: 'Now' }],
+        messages: [
+          ...session.messages,
+          {
+            id: makeId('msg'),
+            sender: 'ai',
+            text: `파일(${withComparable[0]?.name})이 세션 폴더에 복제 업로드되었습니다. 문서 구조 분석을 완료했습니다.`,
+            timestamp: 'Now',
+          },
+        ],
       }));
       event.target.value = '';
     } catch (error) {
@@ -1277,6 +1649,60 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
   const handleFileSelect = (file: WorkspaceFile) => {
     updateActiveSession((session) => ({ ...session, activeFileId: file.id }));
   };
+
+  useEffect(() => {
+    if (!activeFile || !activeFile.storedPath) return;
+    const existing = filePreviewById[activeFile.id];
+    if (existing && existing.kind !== 'none') return;
+
+    let cancelled = false;
+    let attempts = 0;
+    let inFlight = false;
+
+    const loadStoredPreview = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      attempts += 1;
+      setIsFileLoading(true);
+      try {
+        const preview = await buildPreviewForStoredPath(activeFile);
+        if (cancelled) return;
+
+        // Result file can appear slightly later than the run response.
+        if (preview.kind === 'none' && attempts < 6) {
+          return;
+        }
+
+        setFilePreviewById((prev) => ({ ...prev, [activeFile.id]: preview }));
+        const payload = buildComparablePayload(preview);
+        if (!payload) return;
+        updateActiveSession((session) => ({
+          ...session,
+          files: session.files.map((f) => (f.id === activeFile.id ? { ...f, compareText: payload.compareText, compareLineTokens: payload.compareLineTokens } : f)),
+        }));
+      } catch (error) {
+        if (!cancelled) logUiError('file.preview.path.load', error, { fileId: activeFile.id, attempt: attempts });
+      } finally {
+        inFlight = false;
+        if (!cancelled && attempts >= 6) setIsFileLoading(false);
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void loadStoredPreview();
+      if (attempts >= 6) {
+        window.clearInterval(timer);
+        if (!cancelled) setIsFileLoading(false);
+      }
+    }, 1000);
+    void loadStoredPreview();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      setIsFileLoading(false);
+    };
+  }, [activeFile?.id, activeFile?.storedPath, filePreviewById]);
 
   const handleDeleteSession = (sessionId: string) => {
     setSessions((prev) => {
@@ -1852,6 +2278,7 @@ const MainApp = ({ hostUserName, appVersion }: { hostUserName: string; appVersio
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<Provider>('codex');
   const [hostUserName, setHostUserName] = useState('사용자');
   const [appVersion, setAppVersion] = useState('0.1.0');
 
@@ -1866,8 +2293,9 @@ export default function App() {
     };
   }, []);
 
-  const handleLogin = async (_provider: Provider) => {
+  const handleLogin = async (provider: Provider) => {
     try {
+      setSelectedProvider(provider);
       const version = await window.hihangul.getAppVersion();
       if (version?.ok && version.version) {
         setAppVersion(version.version);
@@ -1882,7 +2310,16 @@ export default function App() {
     setIsLoggedIn(true);
   };
 
-  return isLoggedIn ? <MainApp hostUserName={hostUserName} appVersion={appVersion} /> : <AuthScreen onLogin={handleLogin} />;
+  return isLoggedIn
+    ? <MainApp hostUserName={hostUserName} appVersion={appVersion} provider={selectedProvider} />
+    : <AuthScreen onLogin={handleLogin} />;
 }
 
 export { App };
+    const getLocalCodexStatus = async (): Promise<{ ok: boolean; cliFound: boolean; loggedIn: boolean; message: string }> => {
+      const fn = (window.hihangul as any).getCodexLoginStatusLocal;
+      if (typeof fn !== 'function') {
+        return { ok: false, cliFound: false, loggedIn: false, message: 'local status bridge unavailable' };
+      }
+      return fn();
+    };

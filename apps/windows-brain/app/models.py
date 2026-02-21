@@ -9,8 +9,15 @@ class TaskRequest(BaseModel):
     adapter: str = Field(default="pyhwpx", pattern="^(pyhwpx|native)$")
     provider: str = Field(default="claude", pattern="^(claude|codex)$")
     profile_id: str = Field(default="default", min_length=1)
+    source_file_path: str | None = None
+    source_file_name: str | None = None
+    output_file_path: str | None = None
     persist_program: bool = False
     dry_run: bool = False
+
+
+class RoutedTaskRequest(TaskRequest):
+    lane_id: str | None = None
 
 
 class TaskResult(BaseModel):
@@ -19,7 +26,13 @@ class TaskResult(BaseModel):
     run_id: str
     status: str
     generated_code: str
+    nlu_intent: str
     plan_title: str
+    plan_steps: list[str]
+    plan_directives: list[dict]
+    source_file_path: str | None = None
+    output_file_path: str | None = None
+    session_dir: str | None = None
     execution: dict
     package: dict | None = None
 
@@ -57,6 +70,9 @@ class LaneStatusView(BaseModel):
     queued_tasks: int
     worker_started: bool
     active_session_id: str | None = None
+    processed_tasks: int = 0
+    failed_tasks: int = 0
+    last_error: str | None = None
 
 
 class RunRecordView(BaseModel):

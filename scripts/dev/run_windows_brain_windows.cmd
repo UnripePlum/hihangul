@@ -68,11 +68,36 @@ if "%PY_EXE%"=="" (
 )
 echo [windows-brain] python: %PY_EXE%
 
+set "PY_MACHINE="
+for /f "usebackq delims=" %%M in (`"%PY_EXE%" -c "import platform; print(platform.machine())" 2^>nul`) do (
+  if not defined PY_MACHINE set "PY_MACHINE=%%M"
+)
+if /I "%PY_MACHINE%"=="ARM64" (
+  echo [windows-brain] ARM64 python detected. trying x64 python...
+  call :pick_x64_python
+  if not defined PY_EXE (
+    echo [windows-brain] ERROR: x64 python not found.
+    echo [windows-brain] Install Python x64 and set HIHANGUL_PYTHON to that path.
+    exit /b 1
+  )
+  echo [windows-brain] switched to x64 python: %PY_EXE%
+)
+
 set "VENV_PY=%APP_DIR%\.venv\Scripts\python.exe"
 if exist "%VENV_PY%" (
   "%VENV_PY%" -V >nul 2>nul
   if errorlevel 1 (
     echo [windows-brain] broken .venv detected ^(invalid base python^). recreating...
+    rmdir /S /Q .venv
+  )
+)
+if exist "%VENV_PY%" (
+  set "VENV_MACHINE="
+  for /f "usebackq delims=" %%M in (`"%VENV_PY%" -c "import platform; print(platform.machine())" 2^>nul`) do (
+    if not defined VENV_MACHINE set "VENV_MACHINE=%%M"
+  )
+  if /I "%VENV_MACHINE%"=="ARM64" (
+    echo [windows-brain] ARM64 venv detected. recreating with x64 python.
     rmdir /S /Q .venv
   )
 )
@@ -117,3 +142,23 @@ if "%INSTALL_DEPS%"=="1" (
   > ".venv\.deps-hash" echo %REQ_HASH%
 )
 "%PY_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+goto :eof
+
+:pick_x64_python
+set "PY_EXE="
+for %%P in (
+  "%LocalAppData%\Programs\Python\Python313\python.exe"
+  "%LocalAppData%\Programs\Python\Python312\python.exe"
+  "%LocalAppData%\Programs\Python\Python311\python.exe"
+  "%LocalAppData%\Programs\Python\Python310\python.exe"
+  "C:\Python313\python.exe"
+  "C:\Python312\python.exe"
+  "C:\Python311\python.exe"
+  "C:\Python310\python.exe"
+) do (
+  if exist "%%~P" (
+    set "PY_EXE=%%~P"
+    goto :eof
+  )
+)
+goto :eof

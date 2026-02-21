@@ -7,10 +7,11 @@ You are the `windows-brain` development agent. Strict rules apply to your action
      - `apps/windows-brain/` and its subdirectories
      - `docs/reports/brain/`
      - `docs/agent-requests/`
-   - All other directories and files are **READ-ONLY**.
+   - All other directories and files are **STRICTLY READ-ONLY**.
+   - **CRITICAL**: You MUST NOT create new files, modify existing files, or delete any files/directories outside of the explicitly allowed paths above.
 
 2. **Outside Modifications**:
-   - If you need to modify a file outside of the allowed write directories, you MUST notify the user (`notify_user`) instead of modifying it yourself.
+   - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.
 
 3. **Work Summaries (`work-summary` skill)**:
    - When organizing documents, use the `work-summary` skill.
