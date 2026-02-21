@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import AuthGuard
@@ -12,6 +12,7 @@ from .auth_profiles import AuthProfileError, AuthProfileStore
 from .bridge import ParallelsBridgeClient
 from .codex_auth import get_codex_auth_status
 from .config import WINDOWS_AGENT_BASE_URL
+from .file_store import SessionFileStore
 from .guardrails import GUARDRAIL_POLICY, validate_generated_code
 from .lane_queue import LaneQueueManager, LaneTask
 from .memory import HybridMemory
@@ -19,6 +20,7 @@ from .models import (
     AuthProfileUpsertRequest,
     AuthProfileView,
     LaneStatusView,
+    RoutedTaskRequest,
     RunRecordView,
     SessionMessageView,
     SessionSummaryView,
@@ -50,6 +52,12 @@ prompt_assembler = PromptAssembler()
 orchestrator = LLMOrchestrator()
 bridge = ParallelsBridgeClient(WINDOWS_AGENT_BASE_URL)
 auth_profiles = AuthProfileStore(path=memory.root_dir / "auth-profiles.json")
+file_store = SessionFileStore(root_dir=memory.root_dir)
+
+
+def derive_lane_id(user_id: str, session_id: str) -> str:
+    # Session Router policy: same (user, session) pair always lands on the same isolated lane.
+    return f"{user_id}:{session_id}"
 
 
 async def process_task(lane_id: str, payload: dict) -> dict:
@@ -74,8 +82,27 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     if provider == "claude" and not profile.get("token"):
         raise HTTPException(status_code=400, detail="claude profile requires token")
 
+    source_file_path = (payload.get("source_file_path") or "").strip()
+    source_file_name = (payload.get("source_file_name") or "").strip()
+    if not source_file_name:
+        source_file_name = Path(source_file_path).name if source_file_path else "input.hwp"
+
+    allocated = file_store.allocate_result_path(
+        lane_id=lane_id,
+        session_id=session_id,
+        source_file_name=source_file_name,
+    )
+    output_file_path = (payload.get("output_file_path") or "").strip() or allocated["result_path"]
+    if not source_file_path:
+        source_file_path = "input.hwp"
+
     nlu = nlu_engine.parse(user_input)
     plan = planner.build_plan(nlu)
+    plan.directives = [
+        *plan.directives,
+        {"op": "source_path", "value": source_file_path},
+        {"op": "output_path", "value": output_file_path},
+    ]
     memory.append_session_message(session_id, "user", user_input)
     memory.create_run_record(
         run_id=run_id,
@@ -101,7 +128,14 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         session_context=session_context,
         guardrail_policy=GUARDRAIL_POLICY,
     )
-    generated_code = orchestrator.generate_code(assembled_prompt, provider=provider, profile_id=profile_id)
+    generated_code = orchestrator.generate_code(
+        assembled_prompt,
+        provider=provider,
+        profile_id=profile_id,
+        plan=plan,
+        nlu=nlu,
+        auth_profile=profile,
+    )
     violations = validate_generated_code(generated_code)
     if violations:
         memory.finish_run_record(
@@ -159,8 +193,12 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         )
         raise HTTPException(status_code=502, detail=message) from exc
 
-    memory.append_knowledge(f"- user={user_id} lane={lane_id} task={user_input}")
-    memory.append_session_message(session_id, "assistant", f"plan={plan.title} run_id={run_id}")
+    memory.append_knowledge(f"- user={user_id} lane={lane_id} intent={nlu.intent} task={user_input}")
+    memory.append_session_message(
+        session_id,
+        "assistant",
+        f"run_id={run_id} plan={plan.title} intent={nlu.intent} steps={len(plan.steps)}",
+    )
     memory.append_log(
         {
             "event": "task_processed",
@@ -173,6 +211,8 @@ async def process_task(lane_id: str, payload: dict) -> dict:
             "provider": provider,
             "profile_id": profile_id,
             "persist_program": payload["persist_program"],
+            "source_file_path": source_file_path,
+            "output_file_path": output_file_path,
         }
     )
     memory.upsert_index(session_id, user_input)
@@ -190,7 +230,13 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         "run_id": run_id,
         "status": "completed",
         "generated_code": generated_code,
+        "nlu_intent": nlu.intent,
         "plan_title": plan.title,
+        "plan_steps": plan.steps,
+        "plan_directives": plan.directives,
+        "source_file_path": source_file_path,
+        "output_file_path": output_file_path,
+        "session_dir": allocated["session_dir"],
         "execution": execution,
         "package": package,
     }
@@ -300,10 +346,85 @@ async def upsert_auth_profile(req: AuthProfileUpsertRequest) -> AuthProfileView:
     )
 
 
+@app.post("/v1/files/upload")
+async def upload_session_file(
+    session_id: str = Form(...),
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict:
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if not user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="file name is required")
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="file is empty")
+    if len(raw) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file too large (max 50MB)")
+
+    lane_id = derive_lane_id(user_id, session_id)
+    saved = file_store.save_upload(
+        lane_id=lane_id,
+        session_id=session_id,
+        original_name=file.filename,
+        content=raw,
+    )
+    return {
+        "ok": True,
+        "lane_id": lane_id,
+        "session_id": session_id,
+        "stored_file_name": saved["stored_name"],
+        "stored_path": saved["stored_path"],
+        "session_dir": str(Path(saved["stored_path"]).parent.parent),
+        "size": saved["size"],
+    }
+
+
+@app.post("/v1/files/allocate-result")
+async def allocate_result_path(req: dict) -> dict:
+    session_id = str(req.get("session_id") or "").strip()
+    user_id = str(req.get("user_id") or "").strip()
+    source_file_name = str(req.get("source_file_name") or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if not source_file_name:
+        raise HTTPException(status_code=400, detail="source_file_name is required")
+
+    lane_id = derive_lane_id(user_id, session_id)
+    allocated = file_store.allocate_result_path(
+        lane_id=lane_id,
+        session_id=session_id,
+        source_file_name=source_file_name,
+    )
+    return {"ok": True, **allocated}
+
+
 @app.post("/v1/lanes/{lane_id}/tasks", response_model=TaskResult)
 async def enqueue_task(lane_id: str, req: TaskRequest) -> TaskResult:
     if not lane_id.strip():
         raise HTTPException(status_code=400, detail="lane_id is required")
+    if not auth_guard.authorize(req.auth_token):
+        raise HTTPException(status_code=401, detail="invalid auth token")
+    if not auth_guard.allow_lane(req.user_id, lane_id):
+        raise HTTPException(status_code=403, detail="lane isolation rule mismatch")
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    result = await lane_manager.enqueue(
+        lane_id,
+        LaneTask(session_id=req.session_id, payload=req.model_dump(), future=fut),
+        process_task,
+    )
+    return TaskResult(**result)
+
+
+@app.post("/v1/tasks", response_model=TaskResult)
+async def enqueue_task_routed(req: RoutedTaskRequest) -> TaskResult:
+    lane_id = req.lane_id or derive_lane_id(req.user_id, req.session_id)
     if not auth_guard.authorize(req.auth_token):
         raise HTTPException(status_code=401, detail="invalid auth token")
     if not auth_guard.allow_lane(req.user_id, lane_id):

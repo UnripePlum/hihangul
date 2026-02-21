@@ -19,6 +19,16 @@ const api = {
     platform: string;
     message: string;
   }>,
+  postCodexLoginFocus: () => ipcRenderer.invoke("auth:post-codex-login-focus") as Promise<{
+    ok: boolean;
+    message?: string;
+  }>,
+  getCodexLoginStatusLocal: () => ipcRenderer.invoke("auth:codex-login-status-local") as Promise<{
+    ok: boolean;
+    cliFound: boolean;
+    loggedIn: boolean;
+    message: string;
+  }>,
   ensureProviderCli: (provider: "claude" | "codex") => ipcRenderer.invoke(
     "auth:ensure-provider-cli",
     provider,
@@ -46,6 +56,28 @@ const api = {
     payload,
   ) as Promise<{
     ok: boolean;
+    message?: string;
+  }>,
+  saveSessionUpload: (payload: { sessionId: string; fileName: string; bytes: Uint8Array }) => ipcRenderer.invoke(
+    "file:save-session-upload",
+    payload,
+  ) as Promise<{
+    ok: boolean;
+    sessionId?: string;
+    sessionDir?: string;
+    storedFileName?: string;
+    storedPath?: string;
+    size?: number;
+    message?: string;
+  }>,
+  getNextResultPath: (payload: { sessionId: string; sourceFileName: string }) => ipcRenderer.invoke(
+    "file:next-result-path",
+    payload,
+  ) as Promise<{
+    ok: boolean;
+    sessionDir?: string;
+    resultFileName?: string;
+    resultPath?: string;
     message?: string;
   }>,
 };

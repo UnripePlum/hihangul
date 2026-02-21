@@ -13,6 +13,7 @@ let mainWindow = null;
 const SESSION_STORE_DIR = "session-store";
 const SESSION_STORE_FILE = "sessions.json";
 const SESSION_AUDIT_FILE = "session-events.jsonl";
+const SESSION_FILES_ROOT = "HiHangul/sessions";
 const ENABLE_REMOTE_DEBUG = isDev && process.env.HIHANGUL_ENABLE_REMOTE_DEBUGGING === "1";
 // VM compatibility.
 electron_1.app.disableHardwareAcceleration();
@@ -70,6 +71,23 @@ function focusMainWindow() {
         mainWindow.setAlwaysOnTop(false);
     }, 1200);
 }
+function closeCodexAuthBrowserWindows() {
+    if (process.platform !== "win32")
+        return;
+    const commands = [
+        'for %B in (msedge.exe chrome.exe brave.exe firefox.exe) do @taskkill /FI "IMAGENAME eq %B" /FI "WINDOWTITLE eq *OpenAI*" /T /F >nul 2>nul',
+        'for %B in (msedge.exe chrome.exe brave.exe firefox.exe) do @taskkill /FI "IMAGENAME eq %B" /FI "WINDOWTITLE eq *Codex*" /T /F >nul 2>nul',
+        'for %B in (msedge.exe chrome.exe brave.exe firefox.exe) do @taskkill /FI "IMAGENAME eq %B" /FI "WINDOWTITLE eq *Sign in*" /T /F >nul 2>nul',
+    ];
+    for (const cmd of commands) {
+        try {
+            (0, node_child_process_1.spawnSync)("cmd.exe", ["/c", cmd], { stdio: "ignore" });
+        }
+        catch {
+            // best-effort only
+        }
+    }
+}
 function isCodexLoggedIn() {
     const status = (0, node_child_process_1.spawnSync)("codex", ["login", "status"], {
         stdio: "pipe",
@@ -91,6 +109,7 @@ async function waitForCodexLoginAndFocus(timeoutMs = 240000, intervalMs = 2000) 
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
         if (isCodexLoggedIn()) {
+            closeCodexAuthBrowserWindows();
             focusMainWindow();
             return true;
         }
@@ -167,6 +186,8 @@ function sanitizeSessionStore(input) {
         const title = sanitizeText(session.title, 120) || "새 세션";
         const updatedAt = typeof session.updatedAt === "number" ? session.updatedAt : Date.now();
         const messagesRaw = Array.isArray(session.messages) ? session.messages : [];
+        const activeFileId = sanitizeText(session.activeFileId, 128) || null;
+        const filesRaw = Array.isArray(session.files) ? session.files : [];
         const messages = messagesRaw.slice(0, 500).map((msg, msgIndex) => {
             const m = (msg ?? {});
             const role = m.role === "user" || m.role === "assistant" || m.role === "system" ? m.role : "assistant";
@@ -176,7 +197,27 @@ function sanitizeSessionStore(input) {
                 content: sanitizeText(m.content, 4000),
             };
         });
-        return { id, title, updatedAt, messages };
+        const files = filesRaw.slice(0, 1000).map((file, fileIndex) => {
+            const f = (file ?? {});
+            return {
+                id: sanitizeText(f.id, 128) || `file-${Date.now()}-${fileIndex}`,
+                name: sanitizeText(f.name, 240) || `file-${fileIndex}`,
+                size: sanitizeText(f.size, 40),
+                type: sanitizeText(f.type, 24),
+                date: sanitizeText(f.date, 32),
+                mime: sanitizeText(f.mime, 128),
+                uploadedAt: typeof f.uploadedAt === "number" ? f.uploadedAt : Date.now(),
+                lineageKey: sanitizeText(f.lineageKey, 128),
+                parentFileId: sanitizeText(f.parentFileId, 128) || null,
+                compareText: sanitizeText(f.compareText, 200000),
+                compareLineTokens: Array.isArray(f.compareLineTokens)
+                    ? f.compareLineTokens.slice(0, 20000).map((t) => sanitizeText(t, 1000))
+                    : [],
+                storedPath: sanitizeText(f.storedPath, 512),
+                sessionDir: sanitizeText(f.sessionDir, 512),
+            };
+        });
+        return { id, title, updatedAt, messages, files, activeFileId };
     });
     const activeSessionId = sanitizeText(src.activeSessionId, 128);
     return { sessions, activeSessionId };
@@ -206,6 +247,64 @@ function decodeSessionPayload(raw) {
     catch {
         return raw;
     }
+}
+function sanitizePathSegment(value, fallback) {
+    const input = typeof value === "string" ? value : "";
+    const cleaned = input
+        .trim()
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+        .replace(/\.+$/g, "")
+        .slice(0, 120);
+    return cleaned || fallback;
+}
+function splitStemAndExt(fileName) {
+    const dot = fileName.lastIndexOf(".");
+    if (dot <= 0)
+        return { stem: fileName, ext: "" };
+    return {
+        stem: fileName.slice(0, dot),
+        ext: fileName.slice(dot),
+    };
+}
+function getSessionFilesRoot() {
+    return node_path_1.default.join(electron_1.app.getPath("documents"), SESSION_FILES_ROOT);
+}
+async function ensureSessionDir(sessionId) {
+    const safeSessionId = sanitizePathSegment(sessionId, "session");
+    const sessionDir = node_path_1.default.join(getSessionFilesRoot(), safeSessionId);
+    await promises_1.default.mkdir(sessionDir, { recursive: true });
+    return sessionDir;
+}
+async function ensureUniqueFilePath(dir, desiredFileName) {
+    const safeName = sanitizePathSegment(desiredFileName, "file");
+    const { stem, ext } = splitStemAndExt(safeName);
+    const normalizedStem = sanitizePathSegment(stem, "file");
+    let candidate = `${normalizedStem}${ext}`;
+    let candidatePath = node_path_1.default.join(dir, candidate);
+    let index = 2;
+    while (true) {
+        try {
+            await promises_1.default.access(candidatePath);
+            candidate = `${normalizedStem}_${index}${ext}`;
+            candidatePath = node_path_1.default.join(dir, candidate);
+            index += 1;
+        }
+        catch {
+            return { fileName: candidate, filePath: candidatePath };
+        }
+    }
+}
+async function allocateResultPath(sessionId, sourceFileName) {
+    const safeSource = sanitizePathSegment(sourceFileName, "document.hwpx");
+    const { stem, ext } = splitStemAndExt(safeSource);
+    const sessionDir = await ensureSessionDir(sessionId);
+    const desired = `${sanitizePathSegment(stem, "document")}_result${ext || ".hwpx"}`;
+    const unique = await ensureUniqueFilePath(sessionDir, desired);
+    return {
+        sessionDir,
+        resultFileName: unique.fileName,
+        resultPath: unique.filePath,
+    };
 }
 electron_1.app.whenReady().then(() => {
     electron_1.ipcMain.handle("debug:ping", async () => {
@@ -248,6 +347,48 @@ electron_1.app.whenReady().then(() => {
             };
             await promises_1.default.appendFile(auditFile, `${JSON.stringify(audit)}\n`, { encoding: "utf-8", mode: 0o600 });
             return { ok: true };
+        }
+        catch (error) {
+            return { ok: false, message: error.message };
+        }
+    });
+    electron_1.ipcMain.handle("file:save-session-upload", async (_event, payload) => {
+        try {
+            const sessionId = sanitizePathSegment(payload?.sessionId, "session");
+            const fileName = sanitizePathSegment(payload?.fileName, "upload.bin");
+            const bytes = payload?.bytes;
+            const data = bytes instanceof Uint8Array
+                ? bytes
+                : ArrayBuffer.isView(bytes)
+                    ? new Uint8Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+                    : bytes instanceof ArrayBuffer
+                        ? new Uint8Array(bytes)
+                        : null;
+            if (!data || data.byteLength === 0) {
+                return { ok: false, message: "file bytes are required" };
+            }
+            const sessionDir = await ensureSessionDir(sessionId);
+            const target = await ensureUniqueFilePath(sessionDir, fileName);
+            await promises_1.default.writeFile(target.filePath, Buffer.from(data));
+            return {
+                ok: true,
+                sessionId,
+                sessionDir,
+                storedFileName: target.fileName,
+                storedPath: target.filePath,
+                size: data.byteLength,
+            };
+        }
+        catch (error) {
+            return { ok: false, message: error.message };
+        }
+    });
+    electron_1.ipcMain.handle("file:next-result-path", async (_event, payload) => {
+        try {
+            const sessionId = sanitizePathSegment(payload?.sessionId, "session");
+            const sourceFileName = sanitizePathSegment(payload?.sourceFileName, "document.hwpx");
+            const allocated = await allocateResultPath(sessionId, sourceFileName);
+            return { ok: true, ...allocated };
         }
         catch (error) {
             return { ok: false, message: error.message };
@@ -305,35 +446,50 @@ electron_1.app.whenReady().then(() => {
                 detached: true,
                 stdio: "ignore",
             }).unref();
-            const ok = await waitForCodexLoginAndFocus();
-            if (!ok) {
-                return { launched: false, platform: process.platform, message: "codex login timed out" };
-            }
-            return { launched: true, platform: process.platform, message: "codex login completed" };
+            return { launched: true, platform: process.platform, message: "codex login started" };
         }
         if (process.platform === "darwin") {
             (0, node_child_process_1.spawn)("osascript", ["-e", 'tell application "Terminal" to do script "codex login"'], {
                 detached: true,
                 stdio: "ignore",
             }).unref();
-            const ok = await waitForCodexLoginAndFocus();
-            if (!ok) {
-                return { launched: false, platform: process.platform, message: "codex login timed out" };
-            }
-            return { launched: true, platform: process.platform, message: "codex login completed" };
+            return { launched: true, platform: process.platform, message: "codex login started" };
         }
         (0, node_child_process_1.spawn)("x-terminal-emulator", ["-e", "codex login"], {
             detached: true,
             stdio: "ignore",
         }).unref();
-        const ok = await waitForCodexLoginAndFocus();
-        if (!ok) {
-            return { launched: false, platform: process.platform, message: "codex login timed out" };
-        }
-        return { launched: true, platform: process.platform, message: "codex login completed" };
+        return { launched: true, platform: process.platform, message: "codex login started" };
     });
     electron_1.ipcMain.handle("auth:ensure-provider-cli", async (_event, provider) => {
         return ensureProviderCli(provider);
+    });
+    electron_1.ipcMain.handle("auth:post-codex-login-focus", async () => {
+        try {
+            closeCodexAuthBrowserWindows();
+            focusMainWindow();
+            return { ok: true };
+        }
+        catch (error) {
+            return { ok: false, message: error.message };
+        }
+    });
+    electron_1.ipcMain.handle("auth:codex-login-status-local", async () => {
+        try {
+            if (!hasCommand("codex")) {
+                return { ok: false, cliFound: false, loggedIn: false, message: "codex CLI not found" };
+            }
+            const loggedIn = isCodexLoggedIn();
+            return {
+                ok: true,
+                cliFound: true,
+                loggedIn,
+                message: loggedIn ? "codex authenticated" : "codex login required",
+            };
+        }
+        catch (error) {
+            return { ok: false, cliFound: true, loggedIn: false, message: error.message };
+        }
     });
     createMainWindow();
     electron_1.app.on("activate", () => {
