@@ -127,39 +127,79 @@ def _inject_precise_bboxes(blocks: list[dict[str, object]], pdf_blocks: list[dic
         return 0
     assigned = 0
     cursor = 0
-    for block in blocks:
+    used_pdf_idxs = set()
+    for block_num, block in enumerate(blocks):
         target = _normalize_match_text(_block_plain_text(block))
         if not target:
             continue
         best_idx = -1
         best_score = 0.0
-        # Keep locality to reduce wrong matches.
-        for idx in range(cursor, min(len(pdf_blocks), cursor + 24)):
+        # Allow looking backwards up to 35 blocks because overlapping Y coords
+        # can cause PyMuPDF to extract text blocks out of logical XML order.
+        search_start = max(0, cursor - 35)
+        search_end = min(len(pdf_blocks), cursor + 35)
+        for idx in range(search_start, search_end):
+            if idx in used_pdf_idxs:
+                continue
             cand = _normalize_match_text(str(pdf_blocks[idx].get("text", "")))
             if not cand:
                 continue
             if target in cand or cand in target:
                 score = 1.0
             else:
-                score = SequenceMatcher(None, target[:300], cand[:300]).ratio()
+                sm = SequenceMatcher(None, target[:300], cand[:300])
+                matches = sum(trip.size for trip in sm.get_matching_blocks())
+                score = matches / max(1, len(cand[:300]))
             if score > best_score:
                 best_score = score
                 best_idx = idx
         if best_idx < 0 or best_score < 0.45:
             continue
-        matched = pdf_blocks[best_idx]
+            
+        print(f"BBOX MATCH: XML Block {block_num} ('{target[:20]}...') claimed PDF Block {best_idx} ('{str(pdf_blocks[best_idx].get('text', ''))[:20]}') with score {best_score}")
+            
+        matched_blocks = [pdf_blocks[best_idx]]
+        used_pdf_idxs.add(best_idx)
+        combined_cand = _normalize_match_text(str(pdf_blocks[best_idx].get("text", "")))
+        
+        next_cursor = best_idx + 1
+        # Try to greedily absorb consecutive fragments that also match the target
+        while next_cursor < len(pdf_blocks) and len(combined_cand) < len(target) * 1.1:
+            if next_cursor in used_pdf_idxs:
+                next_cursor += 1
+                continue
+            next_cand = _normalize_match_text(str(pdf_blocks[next_cursor].get("text", "")))
+            if not next_cand:
+                next_cursor += 1
+                continue
+            
+            if next_cand in target:
+                print(f"  BBOX GREEDY: XML Block {block_num} also claimed PDF Block {next_cursor}")
+                combined_cand += next_cand
+                matched_blocks.append(pdf_blocks[next_cursor])
+                used_pdf_idxs.add(next_cursor)
+                next_cursor += 1
+            else:
+                break
+
+        page = int(matched_blocks[0]["page"])
+        x0 = min(float(b["x"]) for b in matched_blocks if int(b["page"]) == page)
+        y0 = min(float(b["y"]) for b in matched_blocks if int(b["page"]) == page)
+        x1 = max(float(b["x"]) + float(b["w"]) for b in matched_blocks if int(b["page"]) == page)
+        y1 = max(float(b["y"]) + float(b["h"]) for b in matched_blocks if int(b["page"]) == page)
+
         block["bbox"] = {
-            "page": int(matched["page"]),
-            "x": round(float(matched["x"]), 4),
-            "y": round(float(matched["y"]), 4),
-            "w": round(float(matched["w"]), 4),
-            "h": round(float(matched["h"]), 4),
+            "page": page,
+            "x": round(x0, 4),
+            "y": round(y0, 4),
+            "w": round(x1 - x0, 4),
+            "h": round(y1 - y0, 4),
             "unit": "norm",
             "source": "pdf_exact",
             "score": round(best_score, 3),
         }
         assigned += 1
-        cursor = best_idx + 1
+        cursor = max(cursor, next_cursor)
     return assigned
 
 
