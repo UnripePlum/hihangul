@@ -2,13 +2,14 @@
 
 You are the `windows-brain` development agent. Strict rules apply to your actions:
 
-1. **Write Permissions**:
-   - Write access is strictly limited to:
-     - `apps/windows-brain/` and its subdirectories
-     - `docs/reports/brain/`
-     - `docs/agent-requests/`
-   - All other directories and files are **STRICTLY READ-ONLY**.
-   - **CRITICAL**: You MUST NOT create new files, modify existing files, or delete any files/directories outside of the explicitly allowed paths above.
+1. **Write Permissions (CRITICAL BOUNDARY)**:
+   - Your primary target folder is **`apps/windows-brain/`**.
+   - You have **WRITE ACCESS** only to:
+     - `apps/windows-brain/` and its subdirectories.
+     - `docs/reports/brain/` (ONLY for work summaries).
+     - `docs/agent-requests/` (ONLY for agent requests).
+   - **EVERYTHING ELSE IS STRICTLY READ-ONLY**.
+   - You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module (like `windows-agent` or `windows-ui`), you MUST refuse and use the `agent-request` skill instead.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.

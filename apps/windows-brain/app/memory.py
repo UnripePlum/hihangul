@@ -93,12 +93,16 @@ class HybridMemory:
         cursor = conn.execute("INSERT INTO memory_index(key, value) VALUES (?, ?)", (key, value))
         
         if self._has_vec:
-            # Generate embedding and store it in vec_memory using the generated row id
-            emb = self.embedder.get_embedding(value)
-            conn.execute(
-                "INSERT INTO vec_memory(rowid, embedding) VALUES (?, ?)", 
-                (cursor.lastrowid, serialize_f32(emb))
-            )
+            try:
+                # Generate embedding and store it in vec_memory using the generated row id
+                emb = self.embedder.get_embedding(value)
+                conn.execute(
+                    "INSERT INTO vec_memory(rowid, embedding) VALUES (?, ?)", 
+                    (cursor.lastrowid, serialize_f32(emb))
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Skipping vector insertion due to embedding error: %s", exc)
             
         conn.commit()
         conn.close()
@@ -112,24 +116,32 @@ class HybridMemory:
     def search_index(self, keyword: str, limit: int = 5) -> list[str]:
         conn = sqlite3.connect(self.db_path)
         
+        fallback_to_like = not self._has_vec
+        
         if self._has_vec:
             import sqlite_vec
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             
-            emb = self.embedder.get_embedding(keyword)
-            # Use cosine distance full scan + limit, suitable for small to mid size local databases.
-            rows = conn.execute(
-                """
-                SELECT m.value 
-                FROM vec_memory v 
-                JOIN memory_index m ON m.id = v.rowid 
-                ORDER BY vec_distance_cosine(v.embedding, ?) 
-                LIMIT ?
-                """,
-                (serialize_f32(emb), limit)
-            ).fetchall()
-        else:
+            try:
+                emb = self.embedder.get_embedding(keyword)
+                # Use cosine distance full scan + limit, suitable for small to mid size local databases.
+                rows = conn.execute(
+                    """
+                    SELECT m.value 
+                    FROM vec_memory v 
+                    JOIN memory_index m ON m.id = v.rowid 
+                    ORDER BY vec_distance_cosine(v.embedding, ?) 
+                    LIMIT ?
+                    """,
+                    (serialize_f32(emb), limit)
+                ).fetchall()
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Vector search failed, falling back to LIKE: %s", exc)
+                fallback_to_like = True
+                
+        if fallback_to_like:
             rows = conn.execute(
                 "SELECT value FROM memory_index WHERE value LIKE ? ORDER BY id DESC LIMIT ?",
                 (f"%{keyword}%", limit),

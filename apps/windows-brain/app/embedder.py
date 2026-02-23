@@ -40,8 +40,8 @@ class Embedder:
                         logger.warning(f"Embedding dimension mismatch: expected {DIMENSION}, got {len(embedding)}")
                         # For safety, let's pad or truncate
                         return (embedding + [0.0] * DIMENSION)[:DIMENSION]
+            else:
+                raise ConnectionError(f"Ollama returned status code {resp.status_code}")
         except Exception as exc:
             logger.warning(f"Ollama embedding failed ({self.model}): {exc}")
-
-        # Fallback to zero vector if failed
-        return [0.0] * DIMENSION
+            raise ConnectionError(f"Ollama connection failed: {exc}") from exc
