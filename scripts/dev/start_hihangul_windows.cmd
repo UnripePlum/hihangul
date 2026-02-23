@@ -58,7 +58,7 @@ if not exist "%ROOT%" (
 
 if "%DO_SYNC%"=="1" (
   echo [start-all] syncing source to local disk...
-  call "%ROOT%\scripts\dev\sync_to_windows.cmd"
+  call "%ROOT%\scripts\dev\sync_to_windows.cmd" "%ROOT%"
   if errorlevel 1 (
     echo [start-all] ERROR: sync failed
     exit /b 1
