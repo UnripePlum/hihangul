@@ -1,6 +1,8 @@
 param(
-  [string]$Source = "C:\Mac\Home\IdeaProjects\hihangul",
-  [string]$Destination = "C:\dev\hihangul"
+  [Parameter(Mandatory=$true)]
+  [string]$Source,
+  [Parameter(Mandatory=$true)]
+  [string]$Destination
 )
 
 $ErrorActionPreference = "Stop"

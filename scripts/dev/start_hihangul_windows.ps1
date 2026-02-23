@@ -85,7 +85,7 @@ if ($env:HIHANGUL_ENABLE_PRECISE_LAYOUT -eq "1") {
 
 if ($Sync) {
   Write-Host "[start-all] syncing source to local disk..."
-  & "$Root\scripts\dev\sync_to_windows.ps1" -Source "$Root"
+  & "$Root\scripts\dev\sync_to_windows.ps1" -Source "$Root" -Destination "C:\dev\hihangul"
   if ($LASTEXITCODE -ne 0) {
     throw "sync failed with code $LASTEXITCODE"
   }

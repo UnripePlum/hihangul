@@ -1,11 +1,19 @@
 @echo off
 setlocal EnableExtensions
 
-set "SRC=C:\Mac\Home\IdeaProjects\hihangul"
-set "DST=C:\dev\hihangul"
+if "%~1"=="" (
+  echo [sync] ERROR: Source path must be provided.
+  echo Usage: sync_to_windows.cmd ^<source_path^> ^<destination_path^>
+  exit /b 1
+)
+if "%~2"=="" (
+  echo [sync] ERROR: Destination path must be provided.
+  echo Usage: sync_to_windows.cmd ^<source_path^> ^<destination_path^>
+  exit /b 1
+)
 
-if not "%~1"=="" set "SRC=%~1"
-if not "%~2"=="" set "DST=%~2"
+set "SRC=%~1"
+set "DST=%~2"
 
 echo [sync] Source      : %SRC%
 echo [sync] Destination : %DST%
