@@ -130,3 +130,20 @@ If install fails, run manually:
 npm.cmd install -g @openai/codex
 npm.cmd install -g @anthropic-ai/claude-code
 ```
+
+## 6) Automated Edge Testing via Browser Subagent
+
+Instead of manually opening `chrome://inspect` on the Mac host, the AI assistant (browser subagent) can autonomously connect to the Windows Electron environment's DevTools in the background.
+
+### 6.1 Capability Overview
+By proxying through the DevTools remote debugging WebSocket (`/json/list` -> `webSocketDebuggerUrl`), the subagent can headless-ly:
+- **Execute Console JS**: Read state stores (`window.hihangul`), enforce state changes, or trigger mock events without moving the physical mouse.
+- **Inspect Live DOM**: Capture rendering geometry, verify Tailwind CSS applications, and extract real-time UI hierarchy text natively without relying on OS-level OCR.
+- **Mock Network Requests**: Intercept or fake agent/brain fetch calls to test UI resilience against backend timeouts or malformed JSON payloads.
+
+### 6.2 Subagent Testing Workflow
+1. The Windows host runs the app with `--remote-debug` (opens port `9222`).
+2. The user requests a UI test (e.g., "Check if the diff highlights are rendering correctly on the right pane").
+3. The Mac-based agent fetches the active DevTools page from `http://<WINDOWS_IP>:9222/json/list`.
+4. The agent launches an isolated browser subagent that navigates into the Chromium DevTools Inspector GUI.
+5. The subagent autonomously clicks the "Console" or "Elements" tab, executes injected test scripts, and captures verifiable layout screenshots to deliver the inspection report.

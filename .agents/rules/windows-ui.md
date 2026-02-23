@@ -11,8 +11,11 @@
      - `apps/windows-ui/` and its subdirectories
      - `docs/reports/ui/`
      - `docs/agent-requests/`
+     - `scripts/dev/ui/`
    - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
+   - **CROSS-AGENT REQUESTS**: If you need to change another agent's working directory or shared directories, you MUST NOT modify them directly. You MUST create an agent-request document and use the `send-request` skill.
    - **CRITICAL ENFORCEMENT**: Before creating, modifying, or deleting ANY file (including test scripts like `.py` or `.ts`), you MUST explicitly verify that the absolute path starts with one of the three allowed paths above. If it does not, you MUST abort the action and use the `agent-request` skill instead.
+   - **NO GENERIC COMMANDS**: NEVER use generic shell commands like `rm -rf`, `sed`, `awk`, or `echo >` on files outside of your allowed directories.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.

@@ -156,14 +156,14 @@ for %%D in ("%HIHANGUL_PYTHON%") do set "PY_DIR=%%~dpD"
 if defined PY_DIR set "PATH=%PY_DIR%;%PATH%"
 echo [start-all] python path pinned: %HIHANGUL_PYTHON%
 
-if not exist "%ROOT%\scripts\dev\run_windows_brain_windows.cmd" (
-  echo [start-all] ERROR: script not found: %ROOT%\scripts\dev\run_windows_brain_windows.cmd
+if not exist "%ROOT%\scripts\dev\brain\run_windows_brain_windows.cmd" (
+  echo [start-all] ERROR: script not found: %ROOT%\scripts\dev\brain\run_windows_brain_windows.cmd
   exit /b 1
 )
 
-start "HiHangul Brain" cmd /k "title HiHangul Brain && %ROOT%\scripts\dev\run_windows_brain_windows.cmd %ROOT%\apps\windows-brain"
-start "HiHangul Agent" cmd /k "title HiHangul Agent && %ROOT%\scripts\dev\run_windows_agent_windows.cmd %ROOT%\apps\windows-agent"
-start "HiHangul UI" cmd /k "title HiHangul UI && %ROOT%\scripts\dev\start_windows_ui_windows.cmd %ROOT%\apps\windows-ui --no-sync"
+start "HiHangul Brain" cmd /k "title HiHangul Brain && %ROOT%\scripts\dev\brain\run_windows_brain_windows.cmd %ROOT%\apps\windows-brain"
+start "HiHangul Agent" cmd /k "title HiHangul Agent && %ROOT%\scripts\dev\agent\run_windows_agent_windows.cmd %ROOT%\apps\windows-agent"
+start "HiHangul UI" cmd /k "title HiHangul UI && %ROOT%\scripts\dev\ui\start_windows_ui_windows.cmd %ROOT%\apps\windows-ui --no-sync"
 
 echo [start-all] launched Brain(8000), Agent(9000), UI
 exit /b 0

@@ -117,8 +117,8 @@ if (-not $pythonReady) {
   }
 }
 
-Start-Process cmd.exe -ArgumentList "/k `"title HiHangul Brain && $Root\scripts\dev\run_windows_brain_windows.cmd $Root\apps\windows-brain`"" -WindowStyle Normal
-Start-Process cmd.exe -ArgumentList "/k `"title HiHangul Agent && $Root\scripts\dev\run_windows_agent_windows.cmd $Root\apps\windows-agent`"" -WindowStyle Normal
-Start-Process cmd.exe -ArgumentList "/k `"title HiHangul UI && $Root\scripts\dev\start_windows_ui_windows.cmd $Root\apps\windows-ui --no-sync`"" -WindowStyle Normal
+Start-Process cmd.exe -ArgumentList "/k `"title HiHangul Brain && $Root\scripts\dev\brain\run_windows_brain_windows.cmd $Root\apps\windows-brain`"" -WindowStyle Normal
+Start-Process cmd.exe -ArgumentList "/k `"title HiHangul Agent && $Root\scripts\dev\agent\run_windows_agent_windows.cmd $Root\apps\windows-agent`"" -WindowStyle Normal
+Start-Process cmd.exe -ArgumentList "/k `"title HiHangul UI && $Root\scripts\dev\ui\start_windows_ui_windows.cmd $Root\apps\windows-ui --no-sync`"" -WindowStyle Normal
 
 Write-Host "[start-all] launched Brain(8000), Agent(9000), UI"

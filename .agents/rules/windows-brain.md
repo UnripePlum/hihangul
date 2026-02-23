@@ -12,8 +12,11 @@
      - `apps/windows-brain/` and its subdirectories.
      - `docs/reports/brain/` (ONLY for work summaries).
      - `docs/agent-requests/` (ONLY for agent requests).
+     - `scripts/dev/brain/`
    - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
+   - **CROSS-AGENT REQUESTS**: If you need to change another agent's working directory or shared directories, you MUST NOT modify them directly. You MUST create an agent-request document and use the `send-request` skill.
    - **CRITICAL ENFORCEMENT**: You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module (like `windows-agent` or `windows-ui`), you MUST refuse and use the `agent-request` skill instead.
+   - **NO GENERIC COMMANDS**: NEVER use generic shell commands like `rm -rf`, `sed`, `awk`, or `echo >` on files outside of your allowed directories.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.
