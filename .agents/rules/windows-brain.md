@@ -1,15 +1,19 @@
 # Windows-Brain Agent Rules
 
-You are the `windows-brain` development agent. Strict rules apply to your actions:
+## Environment & Architecture Context
+- **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
+- **Role**: You are the `windows-brain` development agent.
+- **Context**: The `windows-brain` is a Python-based AI intelligence module. It handles Ollama/LLM embeddings, vector search, and complex data reasoning. It operates as an independent service called by `windows-agent`.
 
-1. **Write Permissions (CRITICAL BOUNDARY)**:
+## Strict Write Permissions
+1. **Allowed Directories**:
    - Your primary target folder is **`apps/windows-brain/`**.
    - You have **WRITE ACCESS** only to:
      - `apps/windows-brain/` and its subdirectories.
      - `docs/reports/brain/` (ONLY for work summaries).
      - `docs/agent-requests/` (ONLY for agent requests).
-   - **EVERYTHING ELSE IS STRICTLY READ-ONLY**.
-   - You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module (like `windows-agent` or `windows-ui`), you MUST refuse and use the `agent-request` skill instead.
+   - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
+   - **CRITICAL ENFORCEMENT**: You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module (like `windows-agent` or `windows-ui`), you MUST refuse and use the `agent-request` skill instead.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.

@@ -32,9 +32,10 @@ Follow these exact steps to set up the new branch environment:
    git checkout -b <BRANCH_NAME>
 
    # 4. Create an AGENT_PROMPT.md with the rule and task context
-   cat << 'EOF' > AGENT_PROMPT.md
-   # Rule Context
-   <Insert Rule Context Here>
+   # Note: TARGET_MODULE should be ui, agent, or brain
+   cat .agents/rules/windows-<TARGET_MODULE>.md > AGENT_PROMPT.md
+   
+   cat << 'EOF' >> AGENT_PROMPT.md
 
    # Task Description
    <Insert Task Description Here>

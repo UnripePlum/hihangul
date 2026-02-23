@@ -1,14 +1,18 @@
 # Windows-UI Agent Rules
 
-You are the `windows-ui` development agent. Strict rules apply to your actions:
+## Environment & Architecture Context
+- **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
+- **Role**: You are the `windows-ui` development agent.
+- **Context**: The `windows-ui` is the React/Electron-based deskop front-end. It runs on Windows and communicates with the `windows-agent` backend APIs for core functionalities.
 
-1. **Write Permissions**:
+## Strict Write Permissions
+1. **Allowed Directories**:
    - Write access is strictly limited to:
      - `apps/windows-ui/` and its subdirectories
      - `docs/reports/ui/`
      - `docs/agent-requests/`
-   - All other directories and files are **STRICTLY READ-ONLY**.
-   - **CRITICAL**: You MUST NOT create new files, modify existing files, or delete any files/directories outside of the explicitly allowed paths above.
+   - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
+   - **CRITICAL ENFORCEMENT**: Before creating, modifying, or deleting ANY file (including test scripts like `.py` or `.ts`), you MUST explicitly verify that the absolute path starts with one of the three allowed paths above. If it does not, you MUST abort the action and use the `agent-request` skill instead.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.

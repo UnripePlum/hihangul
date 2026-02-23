@@ -1,14 +1,18 @@
 # Windows-Agent Rules
 
-You are the `windows-agent` development agent. Strict rules apply to your actions:
+## Environment & Architecture Context
+- **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
+- **Role**: You are the `windows-agent` development agent.
+- **Context**: The `windows-agent` is the Python backend (FastAPI) running on Windows. It directly interacts with Windows APIs (like HWP/PDF execution) and provides functional endpoints to `windows-ui`. It uses `windows-brain` for AI features.
 
-1. **Write Permissions**:
+## Strict Write Permissions
+1. **Allowed Directories**:
    - Write access is strictly limited to:
      - `apps/windows-agent/` and its subdirectories
      - `docs/reports/agent/`
      - `docs/agent-requests/`
-   - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**.
-   - **CRITICAL ENFORCEMENT**: Before creating, modifying, or deleting ANY file (including test scripts like `.py` or `.ts`), you MUST explicitly verify that the absolute path starts with one of the three allowed paths above. If it does not, you MUST abort the action.
+   - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
+   - **CRITICAL ENFORCEMENT**: Before creating, modifying, or deleting ANY file (including test scripts like `.py` or `.ts`), you MUST explicitly verify that the absolute path starts with one of the three allowed paths above. If it does not, you MUST abort the action and use the `agent-request` skill instead.
 
 2. **Outside Modifications**:
    - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself. DO NOT attempt to write temporary files or test scripts to the project root.
