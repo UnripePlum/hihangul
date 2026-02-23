@@ -34,3 +34,13 @@
 5. **Immutable Agent Requests**:
    - Once a request document in `docs/agent-requests/` has been shared or sent to another branch using the `send-request` skill, it becomes **STRICTLY READ-ONLY**.
    - You MUST NEVER modify the document again on this branch to prevent cross-branch merge conflicts.
+
+## Current Status & Implementation Details
+- **Tech Stack**: Python, FastAPI, SQLite-vec. Runs on `localhost:8000`.
+- **Role**: The intelligence and planning core. Handles Natural Language Understanding, LLM routing, and context memory mapping.
+- **Recent Progress**:
+  - Phase 1 & 2 fully completed (SessionRouter, LaneQueueManager, NLUEngine, Planner).
+  - OpenClaw format implemented for routing LLM requests (Codex/Claude endpoints).
+  - HybridMemory implemented combining `sqlite-vec` (via local Ollama `bge-m3` embedder) with SQL `LIKE` fallback.
+  - Hardened Ollama connections so embedding failures gracefully drop to pure SQL string search without corrupting operations.
+- **Upcoming/Ongoing**: The intelligence core is currently stable. Primary ongoing responsibilities are orchestrating Diff/Review views and packaging systems by sending well-structured requests to `windows-agent` and `windows-ui`.

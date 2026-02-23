@@ -33,3 +33,12 @@
 5. **Immutable Agent Requests**:
    - Once a request document in `docs/agent-requests/` has been shared or sent to another branch using the `send-request` skill, it becomes **STRICTLY READ-ONLY**.
    - You MUST NEVER modify the document again on this branch to prevent cross-branch merge conflicts.
+
+## Current Status & Implementation Details
+- **Tech Stack**: Python, FastAPI, PyMuPDF, Windows-native HWP Automation. Runs on `localhost:9000`.
+- **Role**: The core mechanical backend executing HWP commands and rendering PDF previews.
+- **Recent Progress**:
+  - Implemented runtime persistence for agent runs (saving `workflow.py` and `result.json` in `apps/windows-agent/runs/<run_id>/`).
+  - Vastly improved text highlighting and precise bounding box matching for the Diff Viewer (`document_preview.py` and `hwp_controller.py`).
+  - Fixed font size scope application logic and self-closing tag retention for cloned HWPX layouts.
+- **Upcoming/Ongoing**: Stabilizing and refining the Diff Viewer integration to provide precise visual feedback for AI-driven document edits.

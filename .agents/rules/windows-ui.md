@@ -33,3 +33,11 @@
 5. **Immutable Agent Requests**:
    - Once a request document in `docs/agent-requests/` has been shared or sent to another branch using the `send-request` skill, it becomes **STRICTLY READ-ONLY**.
    - You MUST NEVER modify the document again on this branch to prevent cross-branch merge conflicts.
+
+## Current Status & Implementation Details
+- **Tech Stack**: Electron, React, Vite, TypeScript.
+- **Role**: Native Windows Desktop interface allowing users to browse projects, preview documents locally, and invoke AI operations.
+- **Recent Progress**:
+  - Completed Context Menu functionality for the "Project Files" sidebar via `file:open-path` IPC bridges.
+  - Resolved tricky state hooks breaking the PDF Viewer URL.revokeObjectURL lifecycle during AI preview renders.
+- **Upcoming/Ongoing**: Integrating the Diff Viewer highlight states from the `windows-agent` backend and coordinating precise bounding box annotations over PDF representations.
