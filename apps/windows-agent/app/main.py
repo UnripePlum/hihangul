@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, UploadFile
@@ -87,6 +88,18 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
         result = run_workflow(req.code, controller, req.dry_run)
     except WorkflowRuntimeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        run_dir = Path(__file__).parent.parent / "runs" / req.run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workflow.py").write_text(req.code, encoding="utf-8")
+        (run_dir / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"Failed to persist agent run data: {exc}")
+
     return ExecuteResponse(status="ok", run_id=req.run_id, adapter=req.adapter, result=result)
 
 

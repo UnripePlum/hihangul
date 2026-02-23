@@ -7,11 +7,11 @@ You are the `windows-agent` development agent. Strict rules apply to your action
      - `apps/windows-agent/` and its subdirectories
      - `docs/reports/agent/`
      - `docs/agent-requests/`
-   - All other directories and files are **STRICTLY READ-ONLY**.
-   - **CRITICAL**: You MUST NOT create new files, modify existing files, or delete any files/directories outside of the explicitly allowed paths above.
+   - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**.
+   - **CRITICAL ENFORCEMENT**: Before creating, modifying, or deleting ANY file (including test scripts like `.py` or `.ts`), you MUST explicitly verify that the absolute path starts with one of the three allowed paths above. If it does not, you MUST abort the action.
 
 2. **Outside Modifications**:
-   - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself.
+   - If you are asked to create, modify, or delete a file outside of the allowed write directories, you MUST notify the user (`notify_user`) and refuse the action instead of doing it yourself. DO NOT attempt to write temporary files or test scripts to the project root.
 
 3. **Work Summaries (`work-summary` skill)**:
    - When organizing documents, use the `work-summary` skill.
