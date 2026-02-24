@@ -264,6 +264,9 @@ class LLMOrchestrator:
         text = (raw or "").strip()
         if not text:
             return None
+            
+        # Refactor typographical quotes to standard quotes to prevent SyntaxError
+        text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
         if "```python" in text:
             start = text.find("```python") + len("```python")
             end = text.rfind("```")
