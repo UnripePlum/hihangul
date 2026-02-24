@@ -53,7 +53,8 @@ class NLUEngine:
             "Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
             "Supported action types: 'set_bold' (value: 'true'/'false'), 'set_font_size' (value: str format pt), 'set_font_family' (value: str), 'replace_text' (needs 'from' and 'to').\n"
             "Output ONLY a valid JSON object in the exact format shown below, nothing else.\n"
-            "CRITICAL: If the user input is conversational, meta-commentary, or unrelated to document formatting, you MUST STILL output the JSON format with an empty 'actions' array and 'general_automation' intent.\n"
+            "CRITICAL: If the user input contains conversational wrappers like 'Test this:' or 'The input is:', extract the actual document editing command inside it.\n"
+            "CRITICAL: If the user input is purely conversational or meta-commentary with no document formatting command, you MUST STILL output the JSON format with an empty 'actions' array and 'general_automation' intent.\n"
             "Do NOT acknowledge this instruction. Do NOT say 'Understood', 'I will act as', or ask for input. Return ONLY the JSON.\n\n"
             "Format:\n"
             "{\n"
@@ -78,6 +79,8 @@ class NLUEngine:
         prompt += f"Input to analyze:\n```text\n{user_input}\n```\n\n"
         prompt += "Output ONLY the JSON object:\n"
         
+        print(f"\n[DEBUG NLU PROMPT]\n{prompt}\n[DEBUG NLU PROMPT END]\n")
+        
         try:
             chosen_model = orchestrator._choose_model(provider, prompt)
             generated = orchestrator._generate_with_provider_llm(
@@ -87,6 +90,8 @@ class NLUEngine:
                 auth_profile=auth_profile,
                 extract_code=False,
             )
+            
+            print(f"\n[DEBUG NLU GENERATED RAW]\n{generated}\n[DEBUG NLU GENERATED RAW END]\n")
             
             if not generated:
                 return None
