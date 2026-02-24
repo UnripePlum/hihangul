@@ -81,14 +81,15 @@ class LLMOrchestrator:
         provider: str,
         chosen_model: str,
         auth_profile: dict[str, Any],
+        extract_code: bool = True,
     ) -> str | None:
         if provider == "codex":
-            return self._generate_with_codex_cli(assembled_prompt, chosen_model)
+            return self._generate_with_codex_cli(assembled_prompt, chosen_model, extract_code)
         if provider == "claude":
-            return self._generate_with_claude(assembled_prompt, chosen_model, auth_profile)
+            return self._generate_with_claude(assembled_prompt, chosen_model, auth_profile, extract_code)
         return None
 
-    def _generate_with_codex_cli(self, prompt: str, model: str) -> str | None:
+    def _generate_with_codex_cli(self, prompt: str, model: str, extract_code: bool = True) -> str | None:
         if shutil.which("codex") is None:
             return None
 
@@ -110,15 +111,18 @@ class LLMOrchestrator:
                 continue
             if proc.returncode != 0:
                 continue
-            parsed = self._extract_python_code(proc.stdout or "")
-            if parsed:
-                return parsed
+            if extract_code:
+                parsed = self._extract_python_code(proc.stdout or "")
+                if parsed:
+                    return parsed
+            else:
+                return proc.stdout or ""
         return None
 
-    def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any]) -> str | None:
+    def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any], extract_code: bool = True) -> str | None:
         token = str(auth_profile.get("token") or "").strip()
         if token:
-            code = self._generate_with_claude_http(prompt, model, token)
+            code = self._generate_with_claude_http(prompt, model, token, extract_code)
             if code:
                 return code
 
@@ -142,9 +146,12 @@ class LLMOrchestrator:
                 continue
             if proc.returncode != 0:
                 continue
-            parsed = self._extract_python_code(proc.stdout or "")
-            if parsed:
-                return parsed
+            if extract_code:
+                parsed = self._extract_python_code(proc.stdout or "")
+                if parsed:
+                    return parsed
+            else:
+                return proc.stdout or ""
         return None
 
     def infer_document_structure_with_sllm(self, blocks: list[dict[str, object]]) -> dict[str, object]:
@@ -200,7 +207,7 @@ class LLMOrchestrator:
         except Exception:
             return "{}"
 
-    def _generate_with_claude_http(self, prompt: str, model: str, token: str) -> str | None:
+    def _generate_with_claude_http(self, prompt: str, model: str, token: str, extract_code: bool = True) -> str | None:
         try:
             import httpx  # local import to avoid hard dependency at import time
         except Exception:
@@ -226,7 +233,9 @@ class LLMOrchestrator:
             content = data.get("content", [])
             text_parts = [part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"]
             raw = "\n".join(text_parts).strip()
-            return self._extract_python_code(raw)
+            if extract_code:
+                return self._extract_python_code(raw)
+            return raw
         except Exception:
             return None
 

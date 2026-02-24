@@ -76,6 +76,7 @@ class NLUEngine:
                 provider=provider,
                 chosen_model=chosen_model,
                 auth_profile=auth_profile,
+                extract_code=False,
             )
             
             if not generated:
