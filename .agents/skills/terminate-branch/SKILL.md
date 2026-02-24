@@ -25,28 +25,14 @@ Follow these exact steps to tear down the workspace:
    - **CRITICAL**: Ensure you are NOT inside the primary `hihangul` repository. You must be in the cloned sibling directory.
    - **CRITICAL**: Check the current git branch (`git branch --show-current`). You **MUST NOT** be on the `main` branch. This skill is strictly for deleting temporary sibling workspaces associated with feature branches.
 
-3. **Archive Resolved Agent Requests:**
-   - Check if this branch successfully fulfilled/resolved any requests from `docs/agent-requests/`.
-   - If so, before deleting this workspace, you must update the **main repository** to archive them into the `resolved` folder.
-   - Execute the following commands (adjust the target repo name `hihangul` if necessary):
-     ```bash
-     cd ../hihangul
-     git checkout main
-     git pull origin main
-     git mv docs/agent-requests/<file_name>.md docs/agent-requests/resolved/<file_name>.md
-     git commit -m "docs: archive resolved agent request <file_name>"
-     git push origin main
-     ```
-   - **Note**: You must do this in the primary `hihangul` repo, because the sibling workspace's feature branch is already merged/closed.
-
-4. **Delete the Workspace (Authorized):**
-   - Since you have verified the prerequisites and archived any requests, you are hereby authorized to use the `run_command` tool to delete the folder.
+3. **Delete the Workspace (Authorized):**
+   - Since you have verified the prerequisites, you are hereby authorized to use the `run_command` tool to delete the folder.
    - Run the deletion from the parent directory to avoid "Resource busy" errors.
    ```bash
    cd ..
    rm -rf <ISOLATED_DIRECTORY_NAME>
    ```
 
-5. **Notify the User & Close the IDE:**
+4. **Notify the User & Close the IDE:**
    - Use the `notify_user` tool to inform the user that the branch workspace has been successfully and safely terminated.
    - Remind the user that they can now close this specific IDE window (Cursor/Antigravity) and return to the main repository window.
