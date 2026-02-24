@@ -28,6 +28,30 @@ CANONICAL_USER_INTENTS = (
     "=> keep original intact, apply edits to copy, return copy result path."
 )
 
+API_REFERENCE = (
+    "### HwpController API Reference ###\n"
+    "Available methods for `controller`:\n"
+    "- `open_document(path: str)`\n"
+    "- `insert_text(text: str)`\n"
+    "- `save_document(path: str)`\n"
+    "- `replace_text(before: str, after: str, scope: str = \"all\")`\n"
+    "- `set_bold(value: bool = True, scope: str = \"all\")`\n"
+    "- `set_font_size(size_pt: int, scope: str = \"all\")`\n"
+    "- `set_font_family(family: str, scope: str = \"all\")`\n"
+    "- `set_align(align: str, scope: str = \"all\")`\n"
+    "- `align_center()`\n"
+    "- `move_doc_begin()`\n"
+    "- `move_para_end()`\n"
+    "- `select_para()`\n"
+    "- `run_action(action_id: str)`\n"
+)
+
+SCOPE_GUIDELINE = (
+    "### Scope Parameter Guideline ###\n"
+    "스타일 적용 API(`set_font_size`, `set_bold`, `set_font_family`, `set_align` 등)의 기본값은 `scope='all'` 이지만, "
+    "사용자가 특정한 텍스트 범위(예: '첫 줄', '특정 단어')를 요청한 경우 반드시 `scope='first_line'` 등과 같이 타겟 영역을 파라미터로 명시해서 호출해야 한다.\n"
+)
+
 
 @dataclass
 class PromptAssembler:
@@ -49,6 +73,8 @@ class PromptAssembler:
             "### OpenClaw-style Prompt Injection\n"
             f"{OPENCLAW_STYLE_INJECTION}\n\n"
             f"{STRICT_LOCALITY_AND_PRESERVATION}\n"
+            f"{API_REFERENCE}\n"
+            f"{SCOPE_GUIDELINE}\n"
             "### Canonical User Intents\n"
             f"{CANONICAL_USER_INTENTS}\n\n"
             "### User Task\n"
