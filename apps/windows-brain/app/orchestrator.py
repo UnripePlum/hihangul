@@ -147,6 +147,59 @@ class LLMOrchestrator:
                 return parsed
         return None
 
+    def infer_document_structure_with_sllm(self, blocks: list[dict[str, object]]) -> dict[str, object]:
+        """
+        2단계: 로컬 sLLM 기반 의미론적 추론 (Semantic Inference)
+        서식 정보가 애매할 때 문서 최상단 단락을 로컬 모델에 전달하여 '제목'을 찾습니다.
+        """
+        # HWP 등 블록 데이터에서 첫 5개 문단 정도만 가볍게 추출
+        intro_text = ""
+        for i, b in enumerate(blocks[:5]):
+            if b.get("type") == "paragraph":
+                runs = b.get("runs", [])
+                text = " ".join(str(r.get("text", "")) for r in runs if isinstance(r, dict)).strip()
+                if text:
+                    intro_text += f"[단락 {i}] {text}\n"
+
+        prompt = (
+            "다음은 서식 정보가 없는 한글 문서 도입부다. 문맥을 분석해 전체 문서를 포괄하는 "
+            "'제목'에 해당하는 단락 인덱스를 찾고 반환하라.\n\n"
+            f"<document_intro>\n{intro_text}</document_intro>\n\n"
+            "출력은 반드시 다음 JSON 포맷만 반환할 것: {\"title_index\": 숫자_또는_null, \"reason\": \"이유\"}"
+        )
+        # TODO: 실제 사내 연동된 Ollama / vLLM 등 로컬 sLLM API Endpoint 주소로 교체 필요
+        response_json_str = self._generate_with_local_sllm_http(prompt, "llama3-8b-instruct", "http://localhost:11434/api/generate")
+        
+        try:
+            import json
+            parsed = json.loads(response_json_str)
+            return {
+                "title_candidate_index": parsed.get("title_index"),
+                "confidence": 0.8,
+                "reason": f"Semantic inference: {parsed.get('reason')}"
+            }
+        except Exception:
+            return {"title_candidate_index": None, "confidence": 0.0, "reason": "sLLM parsing failed"}
+
+    def _generate_with_local_sllm_http(self, prompt: str, model: str, endpoint: str) -> str:
+        """망분리 환경을 위한 로컬 LLM (예: Ollama) 호출"""
+        try:
+            import httpx
+            body = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            }
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(endpoint, json=body)
+            if resp.status_code >= 400:
+                return "{}"
+            data = resp.json()
+            return data.get("response", "{}")
+        except Exception:
+            return "{}"
+
     def _generate_with_claude_http(self, prompt: str, model: str, token: str) -> str | None:
         try:
             import httpx  # local import to avoid hard dependency at import time

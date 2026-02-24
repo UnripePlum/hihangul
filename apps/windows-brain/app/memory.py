@@ -76,6 +76,18 @@ class HybridMemory:
         with self.md_path.open("a", encoding="utf-8") as f:
             f.write(text.strip() + "\n")
 
+    def append_meta_rule(self, rule_text: str) -> None:
+        """
+        3단계: HITL (Human-in-the-Loop) 기반 하이브리드 메모리 자산화
+        사용자가 확정한 문서 구조 패턴("내 기획서는 항상 첫 줄이 제목")을 메타-룰로 직렬화하여 영구 저장합니다.
+        추후 sLLM 개입 없이(Zero-Prompt) 즉시 스타일 분리를 적용하는 데 쓰입니다.
+        """
+        meta_rule_path = self.root_dir / "meta_rules.md"
+        with meta_rule_path.open("a", encoding="utf-8") as f:
+            f.write(f"- [META-RULE] {rule_text.strip()}\n")
+        # 검색에서도 바로 걸릴 수 있도록 일반 knowledge에도 추가
+        self.append_knowledge(f"[META-RULE] {rule_text}")
+
     def append_log(self, payload: dict) -> None:
         record = dict(payload)
         record.setdefault("event_id", str(uuid4()))
