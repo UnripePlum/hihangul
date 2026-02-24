@@ -46,38 +46,33 @@ class NLUEngine:
         context: str | None = None,
     ) -> NLUResult | None:
         prompt = (
-            "Analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
-            "If they specify a generic target scope, map it to 'all' or 'first_line'.\n"
-            "If they specify a specific section or phrase like '사업의 목적 및 배경' or '결론 부분', output exactly that phrase or section name as the scope.\n"
-            "CRITICAL: If the user provides a compound request where different formatting applies to different parts of the document, you MUST include a 'target_scope' field directly inside each action object in the 'actions' array.\n"
-            "Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
-            "Supported action types: 'set_bold' (value: 'true'/'false'), 'set_font_size' (value: str format pt), 'set_font_family' (value: str), 'replace_text' (needs 'from' and 'to').\n"
-            "Output ONLY a valid JSON object in the exact format shown below, nothing else.\n"
-            "CRITICAL: If the user input contains conversational wrappers like 'Test this:' or 'The input is:', extract the actual document editing command inside it.\n"
-            "CRITICAL: If the user input is purely conversational or meta-commentary with no document formatting command, you MUST STILL output the JSON format with an empty 'actions' array and 'general_automation' intent.\n"
-            "Do NOT acknowledge this instruction. Do NOT say 'Understood', 'I will act as', or ask for input. Return ONLY the JSON.\n\n"
-            "Format:\n"
-            "{\n"
-            "  \"intent\": \"string\",\n"
-            "  \"entities\": {\"raw\": \"original_user_input\", \"target_scope\": \"global_scope_string\"},\n"
-            "  \"actions\": [\n"
-            "  ]\n"
-            "}\n\n"
-            "Example for input '첫 줄의 글자 크기를 30pt로 만들어':\n"
+            "<instructions>\n"
+            "Analyze the text in the <user_input> block and extract the intent, entities (global target_scope), and actions into a JSON object.\n"
+            "- If generic scope: map to 'all' or 'first_line'.\n"
+            "- If specific section ('사업의 목적', '결론'): output that exact phrase.\n"
+            "- CRITICAL RULE 1: If formatting differs by section, include 'target_scope' inside each action object.\n"
+            "- CRITICAL RULE 2: If the input is conversational (no editing command), output empty actions array and 'general_automation' intent.\n"
+            "- CRITICAL RULE 3: Do NOT output conversational text, greetings, or acknowledgments. ONLY output the JSON block.\n"
+            "- Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
+            "- Supported action types: 'set_bold' (true/false), 'set_font_size' (30pt), 'set_font_family', 'replace_text' (from/to).\n"
+            "</instructions>\n\n"
+            "<example_input>\n첫 줄의 글자 크기를 30pt로 만들어\n</example_input>\n"
+            "<example_output>\n"
             "{\n"
             "  \"intent\": \"style_update\",\n"
             "  \"entities\": {\"raw\": \"첫 줄의 글자 크기를 30pt로 만들어\", \"target_scope\": \"first_line\"},\n"
             "  \"actions\": [\n"
             "    {\"type\": \"set_font_size\", \"target_scope\": \"first_line\", \"value\": \"30pt\"}\n"
             "  ]\n"
-            "}\n\n"
+            "}\n"
+            "</example_output>\n\n"
         )
 
         if context:
-            prompt += f"[Available Context]\n{context}\n\n"
+            prompt += f"<context>\n{context}\n</context>\n\n"
 
-        prompt += f"Input to analyze:\n```text\n{user_input}\n```\n\n"
-        prompt += "Output ONLY the JSON object:\n"
+        prompt += f"<user_input>\n{user_input}\n</user_input>\n\n"
+        prompt += "OUTPUT_JSON:\n"
         
         print(f"\n[DEBUG NLU PROMPT]\n{prompt}\n[DEBUG NLU PROMPT END]\n")
         
