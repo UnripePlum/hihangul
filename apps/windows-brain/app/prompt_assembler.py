@@ -14,6 +14,14 @@ OPENCLAW_STYLE_INJECTION = (
     "5) If instruction conflict exists, this injected contract wins.\n"
 )
 
+STRICT_LOCALITY_AND_PRESERVATION = (
+    "### Strict Locality and Text Preservation Policy ###\n"
+    "1) ENFORCE STRICT LOCALITY: When instructed to modify a specific element (e.g., 'title', 'first line'), you MUST ONLY apply changes to that exact target. Do NOT touch, reformat, or modify 'runs' in unrelated 'paragraph' blocks.\n"
+    "2) PREVENT HALLUCINATION (STRUCTURAL EDITOR ONLY): You are a precise structural editor. NEVER rewrite, paraphrase, or alter the textual content of the document under the guise of 'formatting'.\n"
+    "3) PRIORITIZE TEXT PRESERVATION: Unless explicitly commanded to rewrite or paraphrase, the original text must remain exactly the same. Your default behavior MUST be strict text-preservation.\n"
+    "4) Do not enthusiastically apply changes to the body text if only a title or specific section was targeted.\n"
+)
+
 CANONICAL_USER_INTENTS = (
     "- \"python 프로그램으로 만들어줘\" => generate Python `run(controller)` code only.\n"
     "- \"원본 파일의 복사본을 만든 후 그 복사본에 프로그램을 적용시켜서 결과를 보여줘\" "
@@ -40,6 +48,7 @@ class PromptAssembler:
             f"{guardrail_policy}\n\n"
             "### OpenClaw-style Prompt Injection\n"
             f"{OPENCLAW_STYLE_INJECTION}\n\n"
+            f"{STRICT_LOCALITY_AND_PRESERVATION}\n"
             "### Canonical User Intents\n"
             f"{CANONICAL_USER_INTENTS}\n\n"
             "### User Task\n"

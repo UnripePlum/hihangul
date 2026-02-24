@@ -121,6 +121,28 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     session_messages = memory.get_session_messages(session_id=session_id, limit=8)
     session_context = [f"{item['role']}: {item['content']}" for item in session_messages]
 
+    # STEP 1 & 2: Document Structure Identification (Heuristics + sLLM)
+    structure_context = ""
+    try:
+        from .structure_parser import analyze_document_structure
+        # In a real scenario, this blocks data should come from `windows-agent` preview API.
+        # For now, we mock the block list to simulate parser invocation.
+        mock_blocks = [{"type": "paragraph", "runs": [{"text": "보고서 제목"}]}]
+        structure_info = analyze_document_structure(mock_blocks)
+        
+        if structure_info.get("confidence", 0.0) < 0.6:
+            structure_info = orchestrator.infer_document_structure_with_sllm(mock_blocks)
+
+        if structure_info.get("title_candidate_index") is not None:
+            structure_context = (
+                f"- [Structure Analyzer] Title is likely at paragraph index "
+                f"{structure_info['title_candidate_index']} (Confidence: {structure_info.get('confidence')}, "
+                f"Reason: {structure_info.get('reason')})"
+            )
+            session_context.append(structure_context)
+    except Exception as e:
+        print(f"Structure parsing skipped or failed: {e}")
+
     assembled_prompt = prompt_assembler.build_prompt(
         user_input=user_input,
         plan=plan,
