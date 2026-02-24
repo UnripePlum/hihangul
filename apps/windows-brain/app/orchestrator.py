@@ -94,16 +94,17 @@ class LLMOrchestrator:
         if not cli_path:
             raise RuntimeError("codex CLI not found in PATH")
 
-        # Best-effort one-shot CLI call. If command shape differs by version, fail fast and fallback.
+        # Best-effort one-shot CLI call. Pass via STDIN to bypass workspace reading
         candidates: list[list[str]] = [
-            [cli_path, "exec", "--model", model, prompt],
-            [cli_path, "exec", prompt],
+            [cli_path, "exec", "--model", model],
+            [cli_path, "exec"],
         ]
         last_error = "codex CLI failed"
         for args in candidates:
             try:
                 proc = subprocess.run(
                     args,
+                    input=prompt,
                     capture_output=True,
                     timeout=90,
                     check=False,
