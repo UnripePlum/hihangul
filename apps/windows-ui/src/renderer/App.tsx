@@ -1566,6 +1566,11 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       const outputPath = typeof data.output_file_path === 'string' ? data.output_file_path : '';
       const outputName = outputPath ? outputPath.split(/[\\/]/).pop() || 'result.hwpx' : '';
       const ext = outputName.includes('.') ? outputName.split('.').pop()?.toLowerCase() : 'hwpx';
+
+      const sourcePathFromData = typeof data.source_file_path === 'string' ? data.source_file_path : '';
+      const sourceFileFromData = sourcePathFromData ? activeSession?.files.find((f: WorkspaceFile) => f.storedPath === sourcePathFromData) : null;
+      const resolvedParentId = sourceFileFromData ? sourceFileFromData.id : (activeFile.parentFileId || activeFile.id);
+
       const childFile: WorkspaceFile | null = outputPath
         ? {
           id: makeId('file'),
@@ -1575,7 +1580,7 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
           date: 'Just now',
           uploadedAt: Date.now(),
           lineageKey: activeFile.lineageKey || buildLineageKey(activeFile.name),
-          parentFileId: activeFile.id,
+          parentFileId: resolvedParentId,
           storedPath: outputPath,
           sessionDir: typeof data.session_dir === 'string' ? data.session_dir : activeFile.sessionDir,
         }
