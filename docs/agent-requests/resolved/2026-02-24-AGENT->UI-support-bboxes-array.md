@@ -1,39 +1,43 @@
-# AGENT -> UI Request: Support Multiple Bounding Boxes (`bboxes` array)
+# Request from AGENT to UI: Support Rendering of Multi-Page `bboxes` Arrays
 
 ## Context
-The `windows-agent` has been upgraded to support paragraphs that span across multiple pages. Previously, the agent only returned a single `bbox` which forced it to choose the "majority page" and abandon highlights for the rest of the text on other pages.
+A user reported that when a specific paragraph spans across two different PDF pages, the UI is dropping the highlight for the first line(s) of the paragraph. 
+Specifically, the user observed that the first line located at the bottom of Page 1 was missing its highlight, while the rest of the paragraph at the top of Page 2 was highlighted perfectly.
 
-The agent now returns an array of `bboxes` inside the `RichBlock` object for paragraphs that span multiple pages.
-
-## Required Changes
-Please update the UI (specifically `App.tsx` and the `RichBlock` type) to support rendering multiple bounding boxes. 
-
-1. **Update `RichBlock` Type**:
-   ```typescript
-   type RichBlock =
-     | { type: 'paragraph'; runs: RichRun[]; bbox?: BlockBBox; bboxes?: BlockBBox[] }
-     | { type: 'table'; rows: string[][]; bbox?: BlockBBox; bboxes?: BlockBBox[] };
-   ```
-
-2. **Update Diff Viewer Rendering Logic**:
-   - In the `changedBboxes` mapping for the `PdfOverlayViewer`, flatMap over `block.bboxes || (block.bbox ? [block.bbox] : [])` instead of just returning `block.bbox`.
-   - In the textual Diff Viewer loop that renders the green badge (`p{page} y={y}` or `p{page} x={x} y={y} w={w} h={h}`), iterate over the same array to display all the relevant bounding boxes for a changed block.
-
-## Example
-If a paragraph spans page 3 and page 4, the backend will now return:
+## Details of Investigation
+The backend (`windows-agent`) properly extracts and outputs an array of bounding boxes for multi-page elements under the `bboxes` property.
+As seen in the JSON payload returned by `windows-agent` for the problematic block:
 ```json
-{
-  "type": "paragraph",
-  "runs": [...],
-  "bbox": { "page": 4, "x": ..., "y": ..., "w": ..., "h": ... },
-  "bboxes": [
-    { "page": 3, "x": ..., "y": ..., "w": ..., "h": ... },
-    { "page": 4, "x": ..., "y": ..., "w": ..., "h": ... }
-  ]
-}
+        "bboxes": [
+          {
+            "page": 1,
+            "x": 0.1429,
+            "y": 0.8785,  // bottom of page 1
+            "w": 0.7142,
+            "h": 0.0178,
+            "unit": "norm",
+            "source": "pdf_exact",
+            "score": 1
+          },
+          {
+            "page": 2,
+            "x": 0.1429,
+            "y": 0.1182,  // top of page 2
+            "w": 0.7142,
+            "h": 0.0463,
+            "unit": "norm",
+            "source": "pdf_exact",
+            "score": 1
+          }
+        ]
 ```
+The data object for this paragraph **does have** `bboxes` correctly representing both Page 1 and Page 2.
+The single `bbox` property defaults to the *majority page* (in this case, Page 2). 
 
-The UI should render highlights on BOTH page 3 and page 4 using the `bboxes` array.
+## Request for UI Component (`windows-ui`)
+Please update the frontend Diff Viewer (specifically the text highlighter component overlaying the PDF) to:
+1. Iterate over the entire `bboxes` array to render highlight boxes, instead of relying solely on the single `bbox` property.
+2. If `block.bboxes` exists and has `length > 0`, the UI MUST map and render *every element* in the array.
+3. Fall back to `block.bbox` ONLY if `block.bboxes` is undefined or empty.
 
-## Impact
-This change strictly fixes the bug where text split across page boundaries would lose partial or complete highlight coverage in the UI diff viewer.
+This will ensure that all lines of text spanning across a page boundary are visibly highlighted.
