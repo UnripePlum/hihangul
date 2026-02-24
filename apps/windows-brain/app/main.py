@@ -144,6 +144,9 @@ async def process_task(lane_id: str, payload: dict) -> dict:
         auth_profile=profile,
         context=context_str
     )
+    
+    print(f"\n[NLU Parse Result]\nIntent: {nlu.intent}\nEntities: {nlu.entities}\nActions: {nlu.actions}\n")
+    
     plan = planner.build_plan(nlu)
     plan.directives = [
         *plan.directives,
