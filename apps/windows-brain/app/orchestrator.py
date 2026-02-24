@@ -279,7 +279,9 @@ class LLMOrchestrator:
         if "controller" in text:
             return text
             
-        return None
+        # Fallback: Just return the raw text to avoid unhandled 'None' crashes, 
+        # allowing the execution engine to report a proper syntax error
+        return text
 
     def _build_run_body(self, plan: Plan, nlu: NLUResult) -> list[str]:
         source_path = "input.hwp"
