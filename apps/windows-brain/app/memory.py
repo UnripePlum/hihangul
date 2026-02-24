@@ -291,6 +291,28 @@ class HybridMemory:
         conn.close()
         return [self._map_run_row(row) for row in rows]
 
+    def get_latest_successful_run_code(self, session_id: str) -> str | None:
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT execution_json FROM run_records "
+            "WHERE session_id = ? AND status = 'completed' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (session_id,)
+        ).fetchone()
+        conn.close()
+        
+        if not row or not row[0]:
+            return None
+            
+        try:
+            execution = json.loads(row[0])
+            if execution and "code" in execution:
+                return execution["code"]
+        except Exception:
+            pass
+            
+        return None
+
     def _map_run_row(self, row: tuple) -> dict:
         return {
             "run_id": row[0],

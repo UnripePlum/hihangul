@@ -106,6 +106,10 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     session_messages = memory.get_session_messages(session_id=session_id, limit=8)
     session_context = [f"{item['role']}: {item['content']}" for item in session_messages]
 
+    previous_code = memory.get_latest_successful_run_code(session_id=session_id)
+    if previous_code:
+        session_context.append(f"previously_generated_code:\n```python\n{previous_code}\n```")
+
     # STEP 1 & 2: Document Structure Identification (Heuristics + sLLM)
     structure_context = ""
     try:

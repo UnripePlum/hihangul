@@ -9,6 +9,7 @@
   - Resolved circular import issues between `nlu.py` and `orchestrator.py` by using Python's `TYPE_CHECKING`.
   - Updated `app/main.py`'s `process_task` pipeline to forward the logged-in session's credentials (`orchestrator`, `provider`, `auth_profile`) to the `NLUEngine`.
   - Hoisted conversational memory and document structure context in `app/main.py` to evaluate prior to NLU execution. The NLU Prompt now receives an `[Available Context]` block, allowing the LLM to understand references like "이전 문단" (previous paragraph) or specific section headers found during structure parsing.
+  - Added logic in `app/memory.py` and `app/main.py` to retrieve the `previously_generated_code` from the latest successful session run. This previous code is now injected into both the NLU context block and the orchestrator's prompt context, enabling smooth workflow continuity across consecutive user requests.
   - Refactored `tests/test_nlu.py` to pass the newly required optional parameters, ensuring older hardcoded regression cases (e.g. "첫 줄", "전체") continue to pass normally when LLM contexts aren't provided.
 - **Unresolved issues:**
   - Semantic targeting accuracy relies on the user's selected LLM capabilities (e.g. Claude generates more accurate JSON extraction than simpler models).
