@@ -95,15 +95,36 @@ class SessionFileStore:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def get_original_upload_path(self, lane_id: str, session_id: str) -> str | None:
+        """현재 세션의 uploads 디렉터리에서 가장 처음 업로드된 원본 파일 경로를 반환합니다."""
+        uploads_dir = self._session_dir(lane_id, session_id) / "uploads"
+        if uploads_dir.exists():
+            files = sorted([f for f in uploads_dir.iterdir() if f.is_file()])
+            if files:
+                return str(files[0])
+        return None
+
     def _ensure_unique_name(self, dir_path: Path, desired_name: str) -> tuple[str, Path]:
         stem, ext = _split_stem_ext(desired_name)
+        
+        # 'xxxx_result_result' 처럼 꼬리표가 중복으로 붙는 것을 방지
+        stem = re.sub(r'_result(\s*\(\d+\))?$', '', stem)
         stem = _sanitize_segment(stem, "file")
+        
+        # 항상 '_result' 꼬리표가 붙도록 명시 (이미 있다면 위에서 중복 제거됨)
+        if not stem.endswith("_result"):
+            stem = f"{stem}_result"
+            
         ext = ext or ""
         candidate_name = f"{stem}{ext}"
         candidate_path = dir_path / candidate_name
-        index = 2
+        
+        if not candidate_path.exists():
+            return candidate_name, candidate_path
+            
+        index = 1
         while candidate_path.exists():
-            candidate_name = f"{stem}_{index}{ext}"
+            candidate_name = f"{stem} ({index}){ext}"
             candidate_path = dir_path / candidate_name
             index += 1
         return candidate_name, candidate_path

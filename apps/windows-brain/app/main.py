@@ -82,10 +82,15 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     if provider == "claude" and not profile.get("token"):
         raise HTTPException(status_code=400, detail="claude profile requires token")
 
-    source_file_path = (payload.get("source_file_path") or "").strip()
-    source_file_name = (payload.get("source_file_name") or "").strip()
-    if not source_file_name:
-        source_file_name = Path(source_file_path).name if source_file_path else "input.hwp"
+    original_upload_path = file_store.get_original_upload_path(lane_id, session_id)
+    if original_upload_path:
+        source_file_path = original_upload_path
+        source_file_name = Path(source_file_path).name
+    else:
+        source_file_path = (payload.get("source_file_path") or "").strip()
+        source_file_name = (payload.get("source_file_name") or "").strip()
+        if not source_file_name:
+            source_file_name = Path(source_file_path).name if source_file_path else "input.hwp"
 
     allocated = file_store.allocate_result_path(
         lane_id=lane_id,
