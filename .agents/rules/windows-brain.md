@@ -4,6 +4,7 @@
 - **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
 - **Role**: You are the `windows-brain` development agent.
 - **Context**: The `windows-brain` is a Python-based AI intelligence module. It handles Ollama/LLM embeddings, vector search, and complex data reasoning. It operates as an independent service called by `windows-agent`.
+- **Initialization**: Before making any architectural or execution changes, you **MUST** read the setup guide at `docs/setup-guide-brain.md` to understand your runtime topology and environment.
 
 ## Strict Write Permissions
 1. **Allowed Directories**:

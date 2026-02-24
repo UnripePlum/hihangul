@@ -4,6 +4,7 @@
 - **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
 - **Role**: You are the `windows-ui` development agent.
 - **Context**: The `windows-ui` is the React/Electron-based deskop front-end. It runs on Windows and communicates with the `windows-agent` backend APIs for core functionalities.
+- **Initialization**: Before making any architectural or execution changes, you **MUST** read the setup guide at `docs/setup-guide-ui.md` to understand your runtime topology and Remote Debugging mechanisms.
 
 ## Strict Write Permissions
 1. **Allowed Directories**:

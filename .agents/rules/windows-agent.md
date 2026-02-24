@@ -4,6 +4,7 @@
 - **OS Environment**: Development occurs on a **macOS host** running **Parallels Desktop** to simulate a **Windows 11 environment**.
 - **Role**: You are the `windows-agent` development agent.
 - **Context**: The `windows-agent` is the Python backend (FastAPI) running on Windows. It directly interacts with Windows APIs (like HWP/PDF execution) and provides functional endpoints to `windows-ui`. It uses `windows-brain` for AI features.
+- **Initialization**: Before making any architectural or execution changes, you **MUST** read the setup guide at `docs/setup-guide-agent.md` to understand your runtime topology and environment.
 
 ## Strict Write Permissions
 1. **Allowed Directories**:
