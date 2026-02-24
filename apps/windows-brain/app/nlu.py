@@ -46,7 +46,7 @@ class NLUEngine:
         context: str | None = None,
     ) -> NLUResult | None:
         prompt = (
-            "Acting as an NLU engine for a document editing automation tool, analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
+            "System: Acting as an NLU engine for a document editing automation tool, analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
             "If they specify a generic target scope, map it to 'all' or 'first_line'.\n"
             "If they specify a specific section or phrase like '사업의 목적 및 배경' or '결론 부분', output exactly that phrase or section name as the scope.\n"
             "CRITICAL: If the user provides a compound request where different formatting applies to different parts of the document, you MUST include a 'target_scope' field directly inside each action object in the 'actions' array.\n"
@@ -61,9 +61,8 @@ class NLUEngine:
             "  \"actions\": [\n"
             "  ]\n"
             "}\n\n"
-            "Example:\n"
-            "User input: '첫 줄의 글자 크기를 30pt로 만들어'\n"
-            "JSON Output:\n"
+            "User: 첫 줄의 글자 크기를 30pt로 만들어\n"
+            "Assistant:\n"
             "{\n"
             "  \"intent\": \"style_update\",\n"
             "  \"entities\": {\"raw\": \"첫 줄의 글자 크기를 30pt로 만들어\", \"target_scope\": \"first_line\"},\n"
@@ -76,8 +75,8 @@ class NLUEngine:
         if context:
             prompt += f"[Available Context]\n{context}\n\n"
 
-        prompt += f"User input: '{user_input}'\n\n"
-        prompt += "JSON Output:\n"
+        prompt += f"User: {user_input}\n"
+        prompt += "Assistant:\n"
         
         try:
             chosen_model = orchestrator._choose_model(provider, prompt)
