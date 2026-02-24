@@ -266,17 +266,19 @@ class LLMOrchestrator:
             return None
         if "```python" in text:
             start = text.find("```python") + len("```python")
-            end = text.find("```", start)
+            end = text.rfind("```")
             block = text[start:end if end > start else None].strip()
             return block or None
         if "```" in text:
             start = text.find("```") + 3
-            end = text.find("```", start)
+            end = text.rfind("```")
             block = text[start:end if end > start else None].strip()
             return block or None
-        # Accept plain code responses containing run(controller)
-        if "def run(controller)" in text:
+            
+        # Accept plain code responses containing controller logic
+        if "controller" in text:
             return text
+            
         return None
 
     def _build_run_body(self, plan: Plan, nlu: NLUResult) -> list[str]:
