@@ -90,13 +90,14 @@ class LLMOrchestrator:
         return None
 
     def _generate_with_codex_cli(self, prompt: str, model: str, extract_code: bool = True) -> str | None:
-        if shutil.which("codex") is None:
+        cli_path = shutil.which("codex")
+        if not cli_path:
             raise RuntimeError("codex CLI not found in PATH")
 
         # Best-effort one-shot CLI call. If command shape differs by version, fail fast and fallback.
         candidates: list[list[str]] = [
-            ["codex", "exec", "--model", model, prompt],
-            ["codex", "exec", prompt],
+            [cli_path, "exec", "--model", model, prompt],
+            [cli_path, "exec", prompt],
         ]
         last_error = "codex CLI failed"
         for args in candidates:
@@ -130,12 +131,13 @@ class LLMOrchestrator:
             if code:
                 return code
 
-        if shutil.which("claude") is None:
+        cli_path = shutil.which("claude")
+        if not cli_path:
             raise RuntimeError("claude CLI not found in PATH")
 
         candidates: list[list[str]] = [
-            ["claude", "-p", prompt, "--model", model],
-            ["claude", "-p", prompt],
+            [cli_path, "-p", prompt, "--model", model],
+            [cli_path, "-p", prompt],
         ]
         last_error = "claude CLI failed"
         for args in candidates:
