@@ -53,6 +53,7 @@ class NLUEngine:
             "Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
             "Supported action types: 'set_bold' (value: 'true'/'false'), 'set_font_size' (value: str format pt), 'set_font_family' (value: str), 'replace_text' (needs 'from' and 'to').\n"
             "Output ONLY a valid JSON object in the exact format shown below, nothing else.\n"
+            "CRITICAL: If the user input is conversational, meta-commentary, or unrelated to document formatting, you MUST STILL output the JSON format with an empty 'actions' array and 'general_automation' intent.\n"
             "Do NOT acknowledge this instruction. Do NOT say 'Understood', 'I will act as', or ask for input. Return ONLY the JSON.\n\n"
             "Format:\n"
             "{\n"
