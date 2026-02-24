@@ -203,6 +203,10 @@ def _hwpx_replace_text(hwpx_bytes: bytes, before: str, after: str, scope: str = 
             xml = re.sub(r"(<hp:t[^>]*>.*?</hp:t>)", repl_first, xml, flags=re.DOTALL)
         else:
             xml = xml.replace(before, after)
+            
+        # Strip linesegarray to force dynamic layout recalculation (prevents text overlap)
+        xml = re.sub(r"<[^:>]*:linesegarray\b[\s\S]*?</[^:>]*:linesegarray>", "", xml, flags=re.IGNORECASE)
+            
         entries[name] = xml.encode("utf-8")
     return _write_hwpx_entries(entries)
 
@@ -321,11 +325,14 @@ def _hwpx_apply_style(
 
     for sec_name in _section_names(entries):
         sec_xml = entries[sec_name].decode("utf-8", errors="ignore")
+        
+        # Strip linesegarray to force dynamic layout recalculation (prevents text overlap on font resize)
+        sec_xml = re.sub(r"<[^:>]*:linesegarray\b[\s\S]*?</[^:>]*:linesegarray>", "", sec_xml, flags=re.IGNORECASE)
 
         tokens = re.split(r'(<[^>]+>)', sec_xml)
         run_stack = []
         p_stack = []
-        modified_runs = set()
+        modified_tokens = set()
 
         for i, t in enumerate(tokens):
             if t.startswith('<hp:p ') or t == '<hp:p>':
@@ -339,13 +346,20 @@ def _hwpx_apply_style(
                 if run_stack:
                     run_stack.pop()
             elif t.startswith('<hp:t ') or t == '<hp:t>':
-                text = tokens[i+1].strip() if i + 1 < len(tokens) else ""
+                text_content = ""
+                for j in range(i+1, len(tokens)):
+                    if tokens[j] == '</hp:t>':
+                        break
+                    if not tokens[j].startswith('<'):
+                        text_content += tokens[j]
+                
+                text = text_content.strip()
                 if text and run_stack:
                     if scope == "first_line" and first_done:
                         continue
                     
                     run_idx = run_stack[-1]
-                    if run_idx not in modified_runs:
+                    if run_idx not in modified_tokens:
                         run_open = tokens[run_idx]
                         id_match = re.search(r'charPrIDRef="(\d+)"', run_open)
                         old_id = None
@@ -375,7 +389,42 @@ def _hwpx_apply_style(
                                     tokens[run_idx] = f'<hp:run charPrIDRef="{id_map[old_id]}">'
                                 else:
                                     tokens[run_idx] = run_open.replace('<hp:run ', f'<hp:run charPrIDRef="{id_map[old_id]}" ', 1)
-                        modified_runs.add(run_idx)
+                        modified_tokens.add(run_idx)
+                        
+                    if p_stack:
+                        p_idx = p_stack[-1]
+                        if p_idx not in modified_tokens:
+                            p_open = tokens[p_idx]
+                            p_id_match = re.search(r'charPrIDRef="(\d+)"', p_open)
+                            
+                            p_old_id = None
+                            if p_id_match:
+                                p_old_id = p_id_match.group(1)
+                            else:
+                                run_open = tokens[run_stack[-1]]
+                                r_id_match = re.search(r'charPrIDRef="(\d+)"', run_open)
+                                if r_id_match:
+                                    p_old_id = r_id_match.group(1)
+
+                            if p_old_id is not None:
+                                if p_old_id not in id_map:
+                                    header_xml, new_id = _clone_charpr(
+                                        header_xml,
+                                        p_old_id,
+                                        bold=bold,
+                                        height=height,
+                                        family=family,
+                                    )
+                                    id_map[p_old_id] = new_id
+                                
+                                if p_id_match:
+                                    tokens[p_idx] = re.sub(r'charPrIDRef="\d+"', f'charPrIDRef="{id_map[p_old_id]}"', p_open, count=1)
+                                else:
+                                    if p_open == '<hp:p>':
+                                        tokens[p_idx] = f'<hp:p charPrIDRef="{id_map[p_old_id]}">'
+                                    else:
+                                        tokens[p_idx] = p_open.replace('<hp:p ', f'<hp:p charPrIDRef="{id_map[p_old_id]}" ', 1)
+                            modified_tokens.add(p_idx)
                         
                     if scope == "first_line":
                         first_done = True
