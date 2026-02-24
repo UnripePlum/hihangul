@@ -29,26 +29,27 @@ class AgentPlanner:
 
         for action in nlu.actions:
             action_type = action.get("type", "")
+            action_scope = action.get("target_scope") or nlu.entities.get("target_scope", "all")
             if action_type == "replace_text" and action.get("from") and action.get("to"):
                 directives.append(
                     {
                         "op": "replace_text",
                         "from": action["from"],
                         "to": action["to"],
-                        "scope": nlu.entities.get("target_scope", "all"),
+                        "scope": action_scope,
                     }
                 )
             elif action_type == "set_bold":
                 directives.append(
-                    {"op": "set_bold", "value": action.get("value", "true"), "scope": nlu.entities.get("target_scope", "all")}
+                    {"op": "set_bold", "value": action.get("value", "true"), "scope": action_scope}
                 )
             elif action_type == "set_font_size":
                 directives.append(
-                    {"op": "set_font_size", "value": action.get("value", "11"), "scope": nlu.entities.get("target_scope", "all")}
+                    {"op": "set_font_size", "value": action.get("value", "11"), "scope": action_scope}
                 )
             elif action_type == "set_font_family":
                 directives.append(
-                    {"op": "set_font_family", "value": action.get("value", "Malgun Gothic"), "scope": nlu.entities.get("target_scope", "all")}
+                    {"op": "set_font_family", "value": action.get("value", "Malgun Gothic"), "scope": action_scope}
                 )
 
         if nlu.intent == "apply_template":
