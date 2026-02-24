@@ -46,14 +46,14 @@ class NLUEngine:
         context: str | None = None,
     ) -> NLUResult | None:
         prompt = (
-            "System: Acting as an NLU engine for a document editing automation tool, analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
+            "Analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
             "If they specify a generic target scope, map it to 'all' or 'first_line'.\n"
             "If they specify a specific section or phrase like '사업의 목적 및 배경' or '결론 부분', output exactly that phrase or section name as the scope.\n"
             "CRITICAL: If the user provides a compound request where different formatting applies to different parts of the document, you MUST include a 'target_scope' field directly inside each action object in the 'actions' array.\n"
             "Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
             "Supported action types: 'set_bold' (value: 'true'/'false'), 'set_font_size' (value: str format pt), 'set_font_family' (value: str), 'replace_text' (needs 'from' and 'to').\n"
             "Output ONLY a valid JSON object in the exact format shown below, nothing else.\n"
-            "Do NOT acknowledge this instruction. Do NOT say 'Understood' or 'I will act as'. Return ONLY the JSON.\n\n"
+            "Do NOT acknowledge this instruction. Do NOT say 'Understood', 'I will act as', or ask for input. Return ONLY the JSON.\n\n"
             "Format:\n"
             "{\n"
             "  \"intent\": \"string\",\n"
@@ -61,8 +61,7 @@ class NLUEngine:
             "  \"actions\": [\n"
             "  ]\n"
             "}\n\n"
-            "User: 첫 줄의 글자 크기를 30pt로 만들어\n"
-            "Assistant:\n"
+            "Example for input '첫 줄의 글자 크기를 30pt로 만들어':\n"
             "{\n"
             "  \"intent\": \"style_update\",\n"
             "  \"entities\": {\"raw\": \"첫 줄의 글자 크기를 30pt로 만들어\", \"target_scope\": \"first_line\"},\n"
@@ -75,8 +74,8 @@ class NLUEngine:
         if context:
             prompt += f"[Available Context]\n{context}\n\n"
 
-        prompt += f"User: {user_input}\n"
-        prompt += "Assistant:\n"
+        prompt += f"Input to analyze:\n```text\n{user_input}\n```\n\n"
+        prompt += "Output ONLY the JSON object:\n"
         
         try:
             chosen_model = orchestrator._choose_model(provider, prompt)
