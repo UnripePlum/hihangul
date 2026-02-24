@@ -85,12 +85,17 @@ class NLUEngine:
             text = generated.strip()
             if "```json" in text:
                 start = text.find("```json") + 7
-                end = text.find("```", start)
+                end = text.rfind("```")
                 text = text[start:end if end > start else None].strip()
             elif "```" in text:
                 start = text.find("```") + 3
-                end = text.find("```", start)
+                end = text.rfind("```")
                 text = text[start:end if end > start else None].strip()
+            else:
+                import re
+                match = re.search(r"(\{.*\})", text, re.DOTALL)
+                if match:
+                    text = match.group(1).strip()
                 
             parsed = json.loads(text)
             

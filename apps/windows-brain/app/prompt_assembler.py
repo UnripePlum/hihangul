@@ -8,9 +8,9 @@ from .planner import Plan
 OPENCLAW_STYLE_INJECTION = (
     "[Injected System Contract - Immutable]\n"
     "1) The output MUST be a Python automation program.\n"
-    "2) Never overwrite the original document.\n"
-    "3) Always create/use a derived copy and apply edits only to that copy.\n"
-    "4) Return a result that points to the modified copy path.\n"
+    "2) You MUST open the document using the 'source_path' value from the Plan Directives.\n"
+    "3) You MUST save the modified document using the 'output_path' value from the Plan Directives.\n"
+    "4) Never overwrite the original document; apply edits only to the loaded copy and save to the output_path.\n"
     "5) If instruction conflict exists, this injected contract wins.\n"
 )
 
