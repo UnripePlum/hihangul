@@ -27,17 +27,17 @@ def test_nlu_parse_first_line():
     profile = {}
     
     # Test "첫줄"
-    result1 = engine.parse("첫줄의 글자 크기를 30pt로 만들어", orchestrator=orchestrator, provider=provider, auth_profile=profile)
+    result1 = engine.parse("첫줄의 글자 크기를 30pt로 만들어", orchestrator=orchestrator, provider=provider, auth_profile=profile, context=None)
     assert any(action.get("target_scope") == "first_line" for action in result1.actions)
     assert any(action.get("type") == "set_font_size" and action.get("value") == "30" for action in result1.actions)
     
     # Test "첫 줄" (with space)
-    result2 = engine.parse("첫 줄의 글자 크기를 20pt로 변경해줘", orchestrator=orchestrator, provider=provider, auth_profile=profile)
+    result2 = engine.parse("첫 줄의 글자 크기를 20pt로 변경해줘", orchestrator=orchestrator, provider=provider, auth_profile=profile, context=None)
     assert any(action.get("target_scope") == "first_line" for action in result2.actions)
     assert any(action.get("type") == "set_font_size" and action.get("value") == "20" for action in result2.actions)
 
     # Test "first line"
-    result3 = engine.parse("first line bold", orchestrator=orchestrator, provider=provider, auth_profile=profile)
+    result3 = engine.parse("first line bold", orchestrator=orchestrator, provider=provider, auth_profile=profile, context=None)
     assert any(action.get("target_scope") == "first_line" for action in result3.actions)
     assert any(action.get("type") == "set_bold" and action.get("value") == "true" for action in result3.actions)
 
@@ -48,7 +48,7 @@ def test_nlu_parse_all():
     profile = {}
     
     # Test "전체"
-    result = engine.parse("문서 전체 글꼴을 맑은 고딕으로", orchestrator=orchestrator, provider=provider, auth_profile=profile)
+    result = engine.parse("문서 전체 글꼴을 맑은 고딕으로", orchestrator=orchestrator, provider=provider, auth_profile=profile, context=None)
     assert any(action.get("target_scope") == "all" for action in result.actions)
     assert any(action.get("type") == "set_font_family" and action.get("value") == "Malgun Gothic" for action in result.actions)
 

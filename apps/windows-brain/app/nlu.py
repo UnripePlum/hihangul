@@ -23,6 +23,7 @@ class NLUEngine:
         orchestrator: "LLMOrchestrator | None" = None,
         provider: str | None = None,
         auth_profile: dict[str, Any] | None = None,
+        context: str | None = None,
     ) -> NLUResult:
         if not (orchestrator and provider and auth_profile is not None):
             raise ValueError(
@@ -30,7 +31,7 @@ class NLUEngine:
                 "Rule-based fallback has been disabled."
             )
 
-        llm_result = self._extract_full_nlu_with_llm(user_input, orchestrator, provider, auth_profile)
+        llm_result = self._extract_full_nlu_with_llm(user_input, orchestrator, provider, auth_profile, context)
         if not llm_result:
             raise ValueError("Failed to generate or parse NLU response from the LLM.")
             
@@ -42,6 +43,7 @@ class NLUEngine:
         orchestrator: "LLMOrchestrator",
         provider: str,
         auth_profile: dict[str, Any],
+        context: str | None = None,
     ) -> NLUResult | None:
         prompt = (
             "You are an NLU engine for a document editing automation tool.\n"
@@ -60,8 +62,12 @@ class NLUEngine:
             "    {\"type\": \"action_type\", \"target_scope\": \"specific_scope_string_if_different\", \"value\": \"optional_value\", \"from\": \"optional\", \"to\": \"optional\"}\n"
             "  ]\n"
             "}\n\n"
-            f"User input: '{user_input}'"
         )
+
+        if context:
+            prompt += f"[Available Context]\n{context}\n\n"
+
+        prompt += f"User input: '{user_input}'"
         
         try:
             chosen_model = orchestrator._choose_model(provider, prompt)
