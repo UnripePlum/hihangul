@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .orchestrator import LLMOrchestrator
 
 
 @dataclass
@@ -12,8 +17,22 @@ class NLUResult:
 
 
 class NLUEngine:
-    def parse(self, user_input: str) -> NLUResult:
+    def parse(
+        self,
+        user_input: str,
+        orchestrator: "LLMOrchestrator | None" = None,
+        provider: str | None = None,
+        auth_profile: dict[str, Any] | None = None,
+    ) -> NLUResult:
         normalized = user_input.strip().lower()
+        
+        # 1. Attempt LLM-based full NLU extraction
+        if orchestrator and provider and auth_profile:
+            llm_result = self._extract_full_nlu_with_llm(user_input, orchestrator, provider, auth_profile)
+            if llm_result:
+                return llm_result
+
+        # 2. Fallback to Regex and Rule-based Engine if LLM is unavailable or fails
         actions: list[dict[str, str]] = []
 
         if "템플릿" in normalized or "template" in normalized:
@@ -51,7 +70,6 @@ class NLUEngine:
                 actions.append({"type": "set_font_family", "value": family})
                 break
 
-        # quoted text replacement: "old" -> "new"
         quoted = re.findall(r"['\"]([^'\"]+)['\"]", user_input)
         if len(quoted) >= 2:
             actions.append({"type": "replace_text", "from": quoted[0], "to": quoted[1]})
@@ -65,3 +83,60 @@ class NLUEngine:
             entities["target_scope"] = "all"
 
         return NLUResult(intent=intent, entities=entities, actions=actions)
+
+    def _extract_full_nlu_with_llm(
+        self,
+        user_input: str,
+        orchestrator: "LLMOrchestrator",
+        provider: str,
+        auth_profile: dict[str, Any],
+    ) -> NLUResult | None:
+        prompt = (
+            "You are an NLU engine for a document editing automation tool.\n"
+            "Given the user's sentence, extract the intent, entities (specifically target_scope), and required formatting actions.\n"
+            "If they specify a generic target scope, map it to 'all' or 'first_line'.\n"
+            "If they specify a specific section or phrase like '사업의 목적 및 배경' or '결론 부분', output exactly that phrase or section name as the scope.\n"
+            "Supported intents: 'apply_template', 'edit_table', 'review_document', 'style_update', 'text_replace', 'general_automation'\n"
+            "Supported action types: 'set_bold' (value: 'true'/'false'), 'set_font_size' (value: str format pt), 'set_font_family' (value: str), 'replace_text' (needs 'from' and 'to').\n"
+            "Output ONLY a valid JSON object in the exact format shown below, nothing else.\n\n"
+            "Format:\n"
+            "{\n"
+            "  \"intent\": \"string\",\n"
+            "  \"entities\": {\"raw\": \"original_user_input\", \"target_scope\": \"scope_string\"},\n"
+            "  \"actions\": [\n"
+            "    {\"type\": \"action_type\", \"value\": \"optional_value\", \"from\": \"optional\", \"to\": \"optional\"}\n"
+            "  ]\n"
+            "}\n\n"
+            f"User input: '{user_input}'"
+        )
+        
+        try:
+            chosen_model = orchestrator._choose_model(provider, prompt)
+            generated = orchestrator._generate_with_provider_llm(
+                assembled_prompt=prompt,
+                provider=provider,
+                chosen_model=chosen_model,
+                auth_profile=auth_profile,
+            )
+            
+            if not generated:
+                return None
+                
+            text = generated.strip()
+            if "```json" in text:
+                start = text.find("```json") + 7
+                end = text.find("```", start)
+                text = text[start:end if end > start else None].strip()
+            elif "```" in text:
+                start = text.find("```") + 3
+                end = text.find("```", start)
+                text = text[start:end if end > start else None].strip()
+                
+            parsed = json.loads(text)
+            return NLUResult(
+                intent=parsed.get("intent", "general_automation"),
+                entities=parsed.get("entities", {"raw": user_input, "target_scope": "all"}),
+                actions=parsed.get("actions", [])
+            )
+        except Exception:
+            return None

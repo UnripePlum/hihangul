@@ -101,7 +101,12 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     if not source_file_path:
         source_file_path = "input.hwp"
 
-    nlu = nlu_engine.parse(user_input)
+    nlu = nlu_engine.parse(
+        user_input,
+        orchestrator=orchestrator,
+        provider=provider,
+        auth_profile=profile
+    )
     plan = planner.build_plan(nlu)
     plan.directives = [
         *plan.directives,
