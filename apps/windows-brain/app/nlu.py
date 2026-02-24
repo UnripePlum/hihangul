@@ -46,8 +46,7 @@ class NLUEngine:
         context: str | None = None,
     ) -> NLUResult | None:
         prompt = (
-            "You are an NLU engine for a document editing automation tool.\n"
-            "Analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
+            "Acting as an NLU engine for a document editing automation tool, analyze the following user input and extract the intent, entities (specifically a global target_scope), and required formatting actions into a JSON object.\n"
             "If they specify a generic target scope, map it to 'all' or 'first_line'.\n"
             "If they specify a specific section or phrase like '사업의 목적 및 배경' or '결론 부분', output exactly that phrase or section name as the scope.\n"
             "CRITICAL: If the user provides a compound request where different formatting applies to different parts of the document, you MUST include a 'target_scope' field directly inside each action object in the 'actions' array.\n"
