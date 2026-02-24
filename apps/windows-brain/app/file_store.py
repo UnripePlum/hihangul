@@ -99,7 +99,7 @@ class SessionFileStore:
         """현재 세션의 uploads 디렉터리에서 가장 처음 업로드된 원본 파일 경로를 반환합니다."""
         uploads_dir = self._session_dir(lane_id, session_id) / "uploads"
         if uploads_dir.exists():
-            files = sorted([f for f in uploads_dir.iterdir() if f.is_file()])
+            files = sorted([f for f in uploads_dir.iterdir() if f.is_file()], key=lambda x: x.stat().st_ctime)
             if files:
                 return str(files[0])
         return None
@@ -120,7 +120,7 @@ class SessionFileStore:
             
         index = 1
         while candidate_path.exists():
-            candidate_name = f"{stem} ({index}){ext}"
+            candidate_name = f"{stem}({index}){ext}"
             candidate_path = dir_path / candidate_name
             index += 1
         return candidate_name, candidate_path
