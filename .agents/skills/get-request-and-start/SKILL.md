@@ -15,14 +15,8 @@ Use this skill when another agent has sent a cross-branch request (e.g., via `se
 
 Follow these exact steps to pull the request and spin up the target workspace:
 
-1. **Pull the Latest Requests:**
-   - Run the following command using the `run_command` tool to fetch the latest changes from the remote `main` branch. This brings in the new agent request file.
-   ```bash
-   git checkout main && git pull origin main
-   ```
-
-2. **Locate and Read the New Request Document:**
-   - Look inside the `docs/agent-requests/` directory to identify the newly pulled request file.
+1. **Locate and Read the New Request Document:**
+   - Look inside the `docs/agent-requests/` directory to identify the newly sent request file. (It was placed here directly by the other agent).
    - Use the `view_file` tool to thoroughly read the new document. 
    - Pay close attention to the `[TARGET]` inside the document title (e.g., `...->UI-...` or `...->AGENT-...`) to determine which agent module needs to be initialized.
 

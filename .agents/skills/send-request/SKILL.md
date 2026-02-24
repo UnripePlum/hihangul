@@ -16,29 +16,25 @@ Use this skill when you have created an agent request document in `docs/agent-re
 
 Follow these exact steps using the `run_command` tool to pass the file across branches safely:
 
-1. **Commit your file on the current branch.**
+1. **Save your file on the current branch.**
+   Ensure your new request document is saved in the local `docs/agent-requests/` folder.
+
+2. **Copy the Request to the Main Repository.**
+   Instead of dealing with git commits and cross-branch checkouts, you will directly copy the file to the primary `hihangul` repository's `docs/agent-requests/` folder.
+   Because you are operating in a sibling directory (e.g., `hihangul-feat-ui-auth-login`), the path to the main repository is `../hihangul/`.
    ```bash
-   git add docs/agent-requests/<your_request_file>.md
-   git commit -m "chore: create agent request for <target>"
+   cp docs/agent-requests/<your_request_file>.md ../hihangul/docs/agent-requests/
    ```
-2. **Switch to the target branch.**
+
+3. **Verify the Copy:**
+   Ensure the file successfully arrived in the main repository:
    ```bash
-   git checkout <TARGET_BRANCH>
+   ls -la ../hihangul/docs/agent-requests/
    ```
-3. **Checkout ONLY the specific request file from your source branch.** 
-   This safely brings the file into the target branch without attempting a full merge, avoiding conflicts!
-   ```bash
-   git checkout <SOURCE_BRANCH> -- docs/agent-requests/<your_request_file>.md
-   ```
-4. **Commit the file on the target branch.**
-   ```bash
-   git commit -m "chore: receive agent request from <SOURCE_BRANCH>"
-   ```
-5. **Return to your original branch to continue your work.**
-   ```bash
-   git checkout <SOURCE_BRANCH>
-   ```
-6. **Notify the User.**
-   Use the `notify_user` tool to inform the user that the request has been securely delivered to the alternative branch and is ready for the other agent to pick up.
-7. **Lock the File (CRITICAL).**
-   Once the file has been successfully sent to the target branch, consider it **LOCKED and STRICTLY READ-ONLY**. Do not make any further edits or additions to this specific file in the source branch to prevent future merge conflicts.
+
+4. **Notify the User.**
+   Use the `notify_user` tool to inform the user that the request has been securely delivered to the main repository and is ready for the other agent to pick up using the `get-request-and-start` skill.
+
+5. **Lock the File (CRITICAL).**
+   Once the file has been successfully copied, consider your local copy **LOCKED and STRICTLY READ-ONLY**. Do not make any further edits or additions to this specific file to prevent desyncs.
+
