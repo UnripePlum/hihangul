@@ -449,7 +449,7 @@ def _hwpx_apply_style(
                                     tokens[run_idx] = run_open.replace('<hp:run ', f'<hp:run charPrIDRef="{id_map[old_id]}" ', 1)
                         modified_tokens.add(run_idx)
                         
-                    if p_stack:
+                    if p_stack and scope != "first_line":
                         p_idx = p_stack[-1]
                         if p_idx not in modified_tokens:
                             p_open = tokens[p_idx]
