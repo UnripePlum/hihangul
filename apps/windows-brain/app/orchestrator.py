@@ -122,7 +122,10 @@ class LLMOrchestrator:
                     return parsed
                 last_error = "Python code block not found in stdout"
             else:
-                return proc.stdout or ""
+                out = (proc.stdout or "").strip()
+                if out:
+                    return out
+                last_error = "stdout was empty"
         raise RuntimeError(f"Codex CLI generation failed: {last_error}")
 
     def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any], extract_code: bool = True) -> str | None:
@@ -163,7 +166,10 @@ class LLMOrchestrator:
                     return parsed
                 last_error = "Python code block not found in stdout"
             else:
-                return proc.stdout or ""
+                out = (proc.stdout or "").strip()
+                if out:
+                    return out
+                last_error = "stdout was empty"
         raise RuntimeError(f"Claude CLI generation failed: {last_error}")
 
     def infer_document_structure_with_sllm(self, blocks: list[dict[str, object]]) -> dict[str, object]:

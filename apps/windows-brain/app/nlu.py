@@ -104,4 +104,4 @@ class NLUEngine:
                 actions=parsed.get("actions", [])
             )
         except Exception as e:
-            raise ValueError(f"Failed to generate or parse NLU response from the LLM: {e}")
+            raise ValueError(f"Failed to generate or parse NLU response from the LLM. Raw output: '{generated}'. Error: {e}")
