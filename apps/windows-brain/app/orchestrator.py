@@ -105,9 +105,10 @@ class LLMOrchestrator:
                 proc = subprocess.run(
                     args,
                     capture_output=True,
-                    text=True,
                     timeout=90,
                     check=False,
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except Exception as e:
                 last_error = f"Subprocess exception: {e}"
@@ -145,9 +146,10 @@ class LLMOrchestrator:
                 proc = subprocess.run(
                     args,
                     capture_output=True,
-                    text=True,
                     timeout=90,
                     check=False,
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except Exception as e:
                 last_error = f"Subprocess exception: {e}"
