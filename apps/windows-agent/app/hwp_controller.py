@@ -39,6 +39,14 @@ class HwpController(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_align(self, align: str, scope: str = "all") -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def align_center(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def move_doc_begin(self) -> None:
         raise NotImplementedError
 
@@ -145,6 +153,20 @@ class InMemoryHwpAdapter(HwpController):
                 family=(family or "").strip(),
             )
         self._record_operation(f"set_font_family:{scope}:{family}")
+
+    def set_align(self, align: str, scope: str = "all") -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("set_align requires an opened document")
+        if self._active_document_ext == ".hwpx" and self._active_document_bytes:
+            self._active_document_bytes = _hwpx_apply_align(
+                self._active_document_bytes,
+                scope=scope,
+                align=align,
+            )
+        self._record_operation(f"set_align:{scope}:{align}")
+
+    def align_center(self) -> None:
+        self.set_align("center")
 
     def move_doc_begin(self) -> None:
         if self._active_document_path is None:
@@ -275,7 +297,7 @@ def _update_attr(tag_open: str, attr: str, value: str) -> str:
 
 
 def _clone_charpr(header_xml: str, old_id: str, *, bold: bool | None, height: int | None, family: str | None) -> tuple[str, str]:
-    charpr_blocks = list(re.finditer(r'<hh:charPr\b[^>]*id="(\d+)"[^>]*(?:/>|>.*?</hh:charPr>)', header_xml, flags=re.DOTALL))
+    charpr_blocks = list(re.finditer(r'<hh:charPr\b[^>]*?\bid="(\d+)"[^>]*(?:/>|>.*?</hh:charPr>)', header_xml, flags=re.DOTALL))
     if not charpr_blocks:
         return header_xml, old_id
     max_id = max(int(m.group(1)) for m in charpr_blocks)
@@ -469,6 +491,156 @@ def _hwpx_apply_style(
 
     entries[header_name] = header_xml.encode("utf-8")
     return _write_hwpx_entries(entries)
+
+
+def _clone_parapr(header_xml: str, old_id: str, *, align: str) -> tuple[str, str]:
+    parapr_blocks = list(re.finditer(r'<hh:paraPr\b[^>]*?\bid="(\d+)"[^>]*(?:/>|>.*?</hh:paraPr>)', header_xml, flags=re.DOTALL))
+    if not parapr_blocks:
+        return header_xml, old_id
+    max_id = max(int(m.group(1)) for m in parapr_blocks)
+    new_id = str(max_id + 1)
+
+    src_match = None
+    for m in parapr_blocks:
+        if m.group(1) == old_id:
+            src_match = m
+            break
+    if src_match is None:
+        return header_xml, old_id
+
+    block = src_match.group(0)
+    is_self_closing = block.endswith('/>')
+    
+    if is_self_closing:
+        open_tag = block[:-2] + ">"
+        body = ""
+    else:
+        open_tag_end = block.find(">")
+        open_tag = block[: open_tag_end + 1]
+        body = block[open_tag_end + 1 : -len("</hh:paraPr>")]
+
+    open_tag = _update_attr(open_tag, "id", new_id)
+    
+    if align:
+        align_match = re.search(r'<hh:align\b[^>]*/>', body)
+        if align_match:
+            old_align_tag = align_match.group(0)
+            new_align_tag = _update_attr(old_align_tag, "horizontal", align.upper())
+            body = body.replace(old_align_tag, new_align_tag, 1)
+        else:
+            align_match_full = re.search(r'<hh:align\b[^>]*>.*?</hh:align>', body, flags=re.DOTALL)
+            if align_match_full:
+                old_align_tag = align_match_full.group(0)
+                open_align_end = old_align_tag.find(">")
+                new_open_align = _update_attr(old_align_tag[:open_align_end+1], "horizontal", align.upper())
+                body = body.replace(old_align_tag, new_open_align + old_align_tag[open_align_end+1:], 1)
+            else:
+                body = f'<hh:align horizontal="{align.upper()}" vertical="BASELINE"/>' + body
+
+    new_block = open_tag + body + "</hh:paraPr>"
+    
+    self_closing_match = re.search(r'<hh:paraProperties\b[^>]*/>', header_xml)
+    if self_closing_match:
+        old_tag = self_closing_match.group(0)
+        new_tag = old_tag[:-2] + ">" + new_block + "</hh:paraProperties>"
+        header_xml = header_xml.replace(old_tag, new_tag, 1)
+    else:
+        insert_pos = header_xml.find("</hh:paraProperties>")
+        if insert_pos < 0:
+            return header_xml, old_id
+        header_xml = header_xml[:insert_pos] + new_block + header_xml[insert_pos:]
+
+    m_count = re.search(r'<hh:paraProperties\b[^>]*itemCnt="(\d+)"', header_xml)
+    if m_count:
+        new_count = str(int(m_count.group(1)) + 1)
+        header_xml = re.sub(
+            r'(<hh:paraProperties\b[^>]*itemCnt=")(\d+)(")',
+            rf"\g<1>{new_count}\3",
+            header_xml,
+            count=1,
+        )
+    return header_xml, new_id
+
+
+def _hwpx_apply_align(
+    hwpx_bytes: bytes,
+    *,
+    scope: str = "all",
+    align: str,
+) -> bytes:
+    entries = _read_hwpx_entries(hwpx_bytes)
+    header_name = "Contents/header.xml"
+    if header_name not in entries:
+        return hwpx_bytes
+    header_xml = entries[header_name].decode("utf-8", errors="ignore")
+
+    id_map: dict[str, str] = {}
+    first_done = False
+
+    for sec_name in _section_names(entries):
+        sec_xml = entries[sec_name].decode("utf-8", errors="ignore")
+        
+        # Strip linesegarray to force dynamic layout recalculation (prevents text overlap on align change)
+        sec_xml = re.sub(r"<[^:>]*:linesegarray\b[\s\S]*?</[^:>]*:linesegarray>", "", sec_xml, flags=re.IGNORECASE)
+
+        tokens = re.split(r'(<[^>]+>)', sec_xml)
+        p_stack = []
+        modified_tokens = set()
+
+        for i, t in enumerate(tokens):
+            if t.startswith('<hp:p ') or t == '<hp:p>':
+                p_stack.append(i)
+            elif t == '</hp:p>':
+                if p_stack:
+                    p_stack.pop()
+            elif t.startswith('<hp:t ') or t == '<hp:t>':
+                text_content = ""
+                for j in range(i+1, len(tokens)):
+                    if tokens[j] == '</hp:t>':
+                        break
+                    if not tokens[j].startswith('<'):
+                        text_content += tokens[j]
+                
+                text = text_content.strip()
+                if text and p_stack:
+                    if scope == "first_line" and first_done:
+                        continue
+                    
+                    p_idx = p_stack[-1]
+                    if p_idx not in modified_tokens:
+                        p_open = tokens[p_idx]
+                        p_id_match = re.search(r'paraPrIDRef="(\d+)"', p_open)
+                        
+                        p_old_id = None
+                        if p_id_match:
+                            p_old_id = p_id_match.group(1)
+
+                        if p_old_id is not None:
+                            if p_old_id not in id_map:
+                                header_xml, new_id = _clone_parapr(
+                                    header_xml,
+                                    p_old_id,
+                                    align=align,
+                                )
+                                id_map[p_old_id] = new_id
+                            
+                            if p_id_match:
+                                tokens[p_idx] = re.sub(r'paraPrIDRef="\d+"', f'paraPrIDRef="{id_map[p_old_id]}"', p_open, count=1)
+                            else:
+                                if p_open == '<hp:p>':
+                                    tokens[p_idx] = f'<hp:p paraPrIDRef="{id_map[p_old_id]}">'
+                                else:
+                                    tokens[p_idx] = p_open.replace('<hp:p ', f'<hp:p paraPrIDRef="{id_map[p_old_id]}" ', 1)
+                        modified_tokens.add(p_idx)
+                        
+                    if scope == "first_line":
+                        first_done = True
+                    
+        entries[sec_name] = "".join(tokens).encode("utf-8")
+
+    entries[header_name] = header_xml.encode("utf-8")
+    return _write_hwpx_entries(entries)
+
 
 
 class PyHwpxAdapter(InMemoryHwpAdapter):
