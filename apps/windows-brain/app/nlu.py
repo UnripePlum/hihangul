@@ -57,7 +57,7 @@ class NLUEngine:
             actions.append({"type": "replace_text", "from": quoted[0], "to": quoted[1]})
 
         entities: dict[str, str] = {"raw": user_input}
-        if "첫줄" in normalized or "first line" in normalized:
+        if "첫줄" in normalized or "첫 줄" in normalized or "first line" in normalized:
             entities["target_scope"] = "first_line"
         elif "전체" in normalized or "all" in normalized:
             entities["target_scope"] = "all"
