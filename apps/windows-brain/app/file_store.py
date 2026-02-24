@@ -108,12 +108,8 @@ class SessionFileStore:
         stem, ext = _split_stem_ext(desired_name)
         
         # 'xxxx_result_result' 처럼 꼬리표가 중복으로 붙는 것을 방지
-        stem = re.sub(r'_result(\s*\(\d+\))?$', '', stem)
+        stem = re.sub(r'_result(\s*\(\d+\))?$', '_result', stem)
         stem = _sanitize_segment(stem, "file")
-        
-        # 항상 '_result' 꼬리표가 붙도록 명시 (이미 있다면 위에서 중복 제거됨)
-        if not stem.endswith("_result"):
-            stem = f"{stem}_result"
             
         ext = ext or ""
         candidate_name = f"{stem}{ext}"
