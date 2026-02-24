@@ -38,6 +38,22 @@ class HwpController(ABC):
     def set_font_family(self, family: str, scope: str = "all") -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def move_doc_begin(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def move_para_end(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def select_para(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run_action(self, action_id: str) -> None:
+        raise NotImplementedError
+
 
 class HwpControllerStateError(ValueError):
     pass
@@ -129,6 +145,26 @@ class InMemoryHwpAdapter(HwpController):
                 family=(family or "").strip(),
             )
         self._record_operation(f"set_font_family:{scope}:{family}")
+
+    def move_doc_begin(self) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("move_doc_begin requires an opened document")
+        self._record_operation("move_doc_begin")
+
+    def move_para_end(self) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("move_para_end requires an opened document")
+        self._record_operation("move_para_end")
+
+    def select_para(self) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("select_para requires an opened document")
+        self._record_operation("select_para")
+
+    def run_action(self, action_id: str) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("run_action requires an opened document")
+        self._record_operation(f"run_action:{action_id}")
 
     def execution_trace(self) -> dict[str, Any]:
         return {

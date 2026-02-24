@@ -462,9 +462,11 @@ def _extract_hwpx_rich(
                 }
             )
         if not runs:
-            return None
+            return {"type": "paragraph", "runs": [], "is_empty_line": True}
         text_accum.append(" ".join([str(run["text"]) for run in runs]))
-        return {"type": "paragraph", "runs": runs}
+        return {"type": "paragraph", "runs": runs, "is_empty_line": False}
+
+    empty_lines_since_last_block = 0
 
     def parse_section(xml_text: str) -> None:
         block_pattern = re.compile(
@@ -472,15 +474,24 @@ def _extract_hwpx_rich(
             flags=re.IGNORECASE,
         )
         for match in block_pattern.finditer(xml_text):
+            nonlocal empty_lines_since_last_block
             tag = (match.group("tag") or "").lower()
             block_xml = match.group(0)
             if tag.endswith(":tbl"):
                 table_block = parse_table_block(block_xml)
                 if table_block:
+                    table_block["newline_count_before"] = empty_lines_since_last_block
+                    table_block["is_empty_line"] = False
                     blocks.append(table_block)
+                    empty_lines_since_last_block = 0
                 continue
             paragraph_block = parse_paragraph_block(block_xml)
             if paragraph_block:
+                if paragraph_block.get("is_empty_line"):
+                    empty_lines_since_last_block += 1
+                else:
+                    paragraph_block["newline_count_before"] = empty_lines_since_last_block
+                    empty_lines_since_last_block = 0
                 blocks.append(paragraph_block)
 
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:

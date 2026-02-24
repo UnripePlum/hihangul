@@ -48,8 +48,8 @@ type WorkspaceFile = {
 type RichRun = { text: string; font_size_px: number; bold: boolean; font_family?: string };
 type BlockBBox = { page: number; x: number; y: number; w: number; h: number; unit?: string; source?: string };
 type RichBlock =
-  | { type: 'paragraph'; runs: RichRun[]; bbox?: BlockBBox }
-  | { type: 'table'; rows: string[][]; bbox?: BlockBBox };
+  | { type: 'paragraph'; runs: RichRun[]; bbox?: BlockBBox; bboxes?: BlockBBox[] }
+  | { type: 'table'; rows: string[][]; bbox?: BlockBBox; bboxes?: BlockBBox[] };
 type FilePreview =
   | { kind: 'none'; note: string; isFileNotFound?: boolean }
   | { kind: 'text'; content: string; truncated: boolean; compareText?: string; compareLineTokens?: string[] }
@@ -191,7 +191,11 @@ function richBlocksToComparableLines(blocks: RichBlock[]): ComparableLine[] {
 function extractComparableLines(preview: FilePreview | undefined): ComparableLine[] | null {
   if (!preview) return null;
   if ('compareLineTokens' in preview && Array.isArray(preview.compareLineTokens) && preview.compareLineTokens.length > 0) {
-    return preview.compareLineTokens.map((token) => {
+    let tokens = preview.compareLineTokens;
+    while (tokens.length > 0 && !tokens[tokens.length - 1].split('\u241F')[0].trim()) {
+      tokens = tokens.slice(0, tokens.length - 1);
+    }
+    return tokens.map((token) => {
       const [text, styleKey] = token.split('\u241F');
       return { text: text ?? '', styleKey: styleKey ?? '' };
     });
@@ -204,7 +208,11 @@ function extractComparableLines(preview: FilePreview | undefined): ComparableLin
 
 function parseComparableLinesFromTokens(tokens: string[] | undefined, fallbackText: string | undefined): ComparableLine[] | null {
   if (Array.isArray(tokens) && tokens.length > 0) {
-    return tokens.map((token) => {
+    let validTokens = tokens;
+    while (validTokens.length > 0 && !validTokens[validTokens.length - 1].split('\u241F')[0].trim()) {
+      validTokens = validTokens.slice(0, validTokens.length - 1);
+    }
+    return validTokens.map((token) => {
       const [text, styleKey] = token.split('\u241F');
       return { text: text ?? '', styleKey: styleKey ?? '' };
     });
@@ -225,8 +233,20 @@ function buildComparablePayload(preview: FilePreview | undefined): { compareText
 
 function extractRichBlocks(preview: FilePreview | undefined): RichBlock[] | null {
   if (!preview) return null;
-  if (preview.kind === 'rich') return preview.blocks;
-  if (preview.kind === 'pdf' && Array.isArray(preview.richBlocks)) return preview.richBlocks;
+  let blocks: RichBlock[] | null = null;
+  if (preview.kind === 'rich') blocks = preview.blocks;
+  else if (preview.kind === 'pdf' && Array.isArray(preview.richBlocks)) blocks = preview.richBlocks;
+
+  if (blocks && blocks.length > 0) {
+    while (
+      blocks.length > 0 &&
+      blocks[blocks.length - 1].type === 'paragraph' &&
+      (!blocks[blocks.length - 1].runs || blocks[blocks.length - 1].runs.every((r: RichRun) => !r.text.trim()))
+    ) {
+      blocks = blocks.slice(0, blocks.length - 1);
+    }
+    return blocks;
+  }
   return null;
 }
 
@@ -2097,17 +2117,17 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                             if (bothPdf) {
                               const changedBboxes: PdfHighlightBox[] = diffRichData
                                 ? diffRichData.resultBlocks
-                                  .map((block, idx) => {
-                                    if (!diffRichData.changedBlockIndexes.has(idx) || !block.bbox) return null;
-                                    return {
-                                      page: block.bbox.page,
-                                      x: block.bbox.x,
-                                      y: block.bbox.y,
-                                      w: block.bbox.w,
-                                      h: block.bbox.h,
-                                    };
+                                  .flatMap((block, idx) => {
+                                    if (!diffRichData.changedBlockIndexes.has(idx)) return [];
+                                    const boxes = block.bboxes && block.bboxes.length > 0 ? block.bboxes : (block.bbox ? [block.bbox] : []);
+                                    return boxes.map((b) => ({
+                                      page: b.page,
+                                      x: b.x,
+                                      y: b.y,
+                                      w: b.w,
+                                      h: b.h,
+                                    }));
                                   })
-                                  .filter(Boolean) as PdfHighlightBox[]
                                 : [];
                               return (
                                 <>
@@ -2171,9 +2191,11 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                                       if (block.type === 'table') {
                                         return (
                                           <div key={`diff-tbl-${blockIndex}`} className={`my-6 overflow-auto border border-slate-300 ${blockClass}`}>
-                                            {changed && block.bbox ? (
+                                            {changed && (block.bboxes || block.bbox) ? (
                                               <div className="text-[10px] px-2 py-1 bg-emerald-200/70 text-emerald-900 border-b border-emerald-300">
-                                                p{block.bbox.page} x={block.bbox.x.toFixed(3)} y={block.bbox.y.toFixed(3)} w={block.bbox.w.toFixed(3)} h={block.bbox.h.toFixed(3)}
+                                                {(block.bboxes && block.bboxes.length > 0 ? block.bboxes : block.bbox ? [block.bbox] : []).map((b, i) => (
+                                                  <span key={i} className="mr-2">p{b.page} x={b.x.toFixed(3)} y={b.y.toFixed(3)} w={b.w.toFixed(3)} h={b.h.toFixed(3)}</span>
+                                                ))}
                                               </div>
                                             ) : null}
                                             <table className="w-full border-collapse text-[14px]">
@@ -2194,9 +2216,11 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                                       }
                                       return (
                                         <p key={`diff-p-${blockIndex}`} className={`my-1 ${blockClass}`}>
-                                          {changed && block.bbox ? (
+                                          {changed && (block.bboxes || block.bbox) ? (
                                             <span className="inline-block mr-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-200/70 text-emerald-900 align-middle">
-                                              p{block.bbox.page} y={block.bbox.y.toFixed(3)}
+                                              {(block.bboxes && block.bboxes.length > 0 ? block.bboxes : block.bbox ? [block.bbox] : []).map((b, i) => (
+                                                <span key={i} className={i > 0 ? "ml-1" : ""}>p{b.page} y={b.y.toFixed(3)}</span>
+                                              ))}
                                             </span>
                                           ) : null}
                                           {block.runs.map((run, runIndex) => (
