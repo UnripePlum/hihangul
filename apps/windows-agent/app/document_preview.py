@@ -412,6 +412,26 @@ def _parse_hwpx_char_styles(header_xml: str) -> dict[str, dict[str, object]]:
     return styles
 
 
+def _parse_hwpx_para_styles(header_xml: str) -> dict[str, str]:
+    styles: dict[str, str] = {}
+    for match in re.finditer(r"<[^>]*paraPr\b([^>]*)>([\s\S]*?)</[^>]*paraPr>", header_xml, flags=re.IGNORECASE):
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        key = _get_attr(attrs, ["id", "paraPrID"])
+        if not key:
+            continue
+        align_match = re.search(r"<[^>]*align\b([^>]*)>", body, flags=re.IGNORECASE)
+        if align_match:
+            align_attrs = align_match.group(1) or ""
+            horizontal = _get_attr(align_attrs, ["horizontal"])
+            if horizontal:
+                styles[key] = horizontal.lower()
+        else:
+            styles[key] = "justify"
+    return styles
+
+
+
 def _extract_hwpx_rich(
     file_bytes: bytes,
     *,
@@ -422,6 +442,8 @@ def _extract_hwpx_rich(
     blocks: list[dict[str, object]] = []
     text_accum: list[str] = []
     char_styles: dict[str, dict[str, object]] = {}
+    para_styles: dict[str, str] = {}
+
 
     def parse_table_block(tbl_xml: str) -> dict[str, object] | None:
         rows: list[list[str]] = []
@@ -443,6 +465,8 @@ def _extract_hwpx_rich(
         p_open = re.search(r"<[^:>]*:p\b([^>]*)>", p_xml, flags=re.IGNORECASE)
         p_attrs = p_open.group(1) if p_open else ""
         paragraph_char_id = _get_attr(p_attrs, ["charPrIDRef"])
+        para_pr_id = _get_attr(p_attrs, ["paraPrIDRef"])
+        align = para_styles.get(para_pr_id, "justify") if para_pr_id else "justify"
         runs: list[dict[str, object]] = []
         for run_xml in re.findall(r"<[^:>]*:run\b[\s\S]*?</[^:>]*:run>", p_xml, flags=re.IGNORECASE):
             run_attr = re.search(r"<[^:>]*:run\b([^>]*)>", run_xml, flags=re.IGNORECASE)
@@ -462,9 +486,9 @@ def _extract_hwpx_rich(
                 }
             )
         if not runs:
-            return {"type": "paragraph", "runs": [], "is_empty_line": True}
+            return {"type": "paragraph", "runs": [], "is_empty_line": True, "align": align}
         text_accum.append(" ".join([str(run["text"]) for run in runs]))
-        return {"type": "paragraph", "runs": runs, "is_empty_line": False}
+        return {"type": "paragraph", "runs": runs, "is_empty_line": False, "align": align}
 
     empty_lines_since_last_block = 0
 
@@ -503,16 +527,19 @@ def _extract_hwpx_rich(
             "header.xml",
         ]
         merged_styles: dict[str, dict[str, object]] = {}
+        merged_para_styles: dict[str, str] = {}
         for style_name in style_files:
             if style_name not in zf.namelist():
                 continue
             try:
                 style_xml = zf.read(style_name).decode("utf-8", errors="ignore")
                 merged_styles.update(_parse_hwpx_char_styles(style_xml))
+                merged_para_styles.update(_parse_hwpx_para_styles(style_xml))
             except Exception:  # noqa: BLE001
                 continue
         if merged_styles:
             char_styles = merged_styles
+        para_styles = merged_para_styles
 
         section_files = sorted(
             [
