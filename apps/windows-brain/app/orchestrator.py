@@ -91,13 +91,14 @@ class LLMOrchestrator:
 
     def _generate_with_codex_cli(self, prompt: str, model: str, extract_code: bool = True) -> str | None:
         if shutil.which("codex") is None:
-            return None
+            raise RuntimeError("codex CLI not found in PATH")
 
         # Best-effort one-shot CLI call. If command shape differs by version, fail fast and fallback.
         candidates: list[list[str]] = [
             ["codex", "exec", "--model", model, prompt],
             ["codex", "exec", prompt],
         ]
+        last_error = "codex CLI failed"
         for args in candidates:
             try:
                 proc = subprocess.run(
@@ -107,17 +108,20 @@ class LLMOrchestrator:
                     timeout=90,
                     check=False,
                 )
-            except Exception:
+            except Exception as e:
+                last_error = f"Subprocess exception: {e}"
                 continue
             if proc.returncode != 0:
+                last_error = f"Return code {proc.returncode}, stderr: {proc.stderr}"
                 continue
             if extract_code:
                 parsed = self._extract_python_code(proc.stdout or "")
                 if parsed:
                     return parsed
+                last_error = "Python code block not found in stdout"
             else:
                 return proc.stdout or ""
-        return None
+        raise RuntimeError(f"Codex CLI generation failed: {last_error}")
 
     def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any], extract_code: bool = True) -> str | None:
         token = str(auth_profile.get("token") or "").strip()
@@ -127,12 +131,13 @@ class LLMOrchestrator:
                 return code
 
         if shutil.which("claude") is None:
-            return None
+            raise RuntimeError("claude CLI not found in PATH")
 
         candidates: list[list[str]] = [
             ["claude", "-p", prompt, "--model", model],
             ["claude", "-p", prompt],
         ]
+        last_error = "claude CLI failed"
         for args in candidates:
             try:
                 proc = subprocess.run(
@@ -142,17 +147,20 @@ class LLMOrchestrator:
                     timeout=90,
                     check=False,
                 )
-            except Exception:
+            except Exception as e:
+                last_error = f"Subprocess exception: {e}"
                 continue
             if proc.returncode != 0:
+                last_error = f"Return code {proc.returncode}, stderr: {proc.stderr}"
                 continue
             if extract_code:
                 parsed = self._extract_python_code(proc.stdout or "")
                 if parsed:
                     return parsed
+                last_error = "Python code block not found in stdout"
             else:
                 return proc.stdout or ""
-        return None
+        raise RuntimeError(f"Claude CLI generation failed: {last_error}")
 
     def infer_document_structure_with_sllm(self, blocks: list[dict[str, object]]) -> dict[str, object]:
         """
@@ -228,16 +236,19 @@ class LLMOrchestrator:
             with httpx.Client(timeout=90.0) as client:
                 resp = client.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
             if resp.status_code >= 400:
-                return None
+                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
             data = resp.json()
             content = data.get("content", [])
             text_parts = [part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"]
             raw = "\n".join(text_parts).strip()
             if extract_code:
-                return self._extract_python_code(raw)
+                parsed = self._extract_python_code(raw)
+                if not parsed:
+                    raise RuntimeError("Python code block not found in Claude response")
+                return parsed
             return raw
-        except Exception:
-            return None
+        except Exception as e:
+            raise RuntimeError(f"Claude HTTP API failed: {e}")
 
     def _extract_python_code(self, raw: str) -> str | None:
         text = (raw or "").strip()
