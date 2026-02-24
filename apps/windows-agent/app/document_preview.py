@@ -181,11 +181,11 @@ def _inject_precise_bboxes(blocks: list[dict[str, object]], pdf_blocks: list[dic
                 current_match_size = sum(trip.size for trip in sm.get_matching_blocks())
                 local_score = current_match_size / max(1, len(current_combined[:300]))
             
-            # Greedily look ahead to absorb fragments (allow up to 3 misses to jump over page numbers)
+            # Greedily look ahead to absorb fragments (allow up to 5 misses to jump over page numbers)
             lookahead = idx + 1
             absorbed_count = 0
             misses = 0
-            while lookahead < len(pdf_blocks) and absorbed_count < 15 and len(current_combined) < len(target) * 1.5:
+            while lookahead < len(pdf_blocks) and absorbed_count < 20 and len(current_combined) < len(target) * 1.5:
                 if lookahead in used_pdf_idxs:
                     lookahead += 1
                     continue
@@ -208,14 +208,14 @@ def _inject_precise_bboxes(blocks: list[dict[str, object]], pdf_blocks: list[dic
                 gain = temp_match_size - current_match_size
                 if gain <= min(3, len(next_cand) - 1):
                     misses += 1
-                    if misses >= 3:
+                    if misses >= 5:
                         break
                     lookahead += 1
                     continue
                     
                 if temp_score < local_score * 0.7 and temp_score < 0.6:
                     misses += 1
-                    if misses >= 3:
+                    if misses >= 5:
                         break
                     lookahead += 1
                     continue

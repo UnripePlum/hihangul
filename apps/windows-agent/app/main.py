@@ -27,10 +27,14 @@ packager = ProgramPackager(
 )
 
 
+class DocumentNotFoundError(Exception):
+    pass
+
+
 def _read_supported_doc(path_text: str, max_size: int) -> tuple[str, bytes]:
     doc_path = Path(path_text)
     if not doc_path.exists():
-        raise HTTPException(status_code=404, detail=f"file not found: {doc_path}")
+        raise DocumentNotFoundError(f"file not found: {doc_path}")
     if not doc_path.is_file():
         raise HTTPException(status_code=400, detail="path must point to a file")
     ext = doc_path.suffix.lower().lstrip(".")
@@ -180,14 +184,16 @@ async def preview_document_from_path(req: dict) -> dict:
     if layout_mode not in {"approx", "precise"}:
         raise HTTPException(status_code=400, detail="layout_mode must be one of: approx, precise")
 
-    file_name, raw = _read_supported_doc(path_text, max_size=25 * 1024 * 1024)
     try:
+        file_name, raw = _read_supported_doc(path_text, max_size=25 * 1024 * 1024)
         preview = build_document_preview(
             file_name,
             raw,
             layout_mode=layout_mode,
             render_pdf=render_to_pdf_via_hwp_engine,
         )
+    except DocumentNotFoundError as exc:
+        return {"ok": False, "error": "file_not_found"}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -205,10 +211,11 @@ async def render_pdf_from_path(req: dict) -> Response:
     path_text = str(req.get("path") or "").strip()
     if not path_text:
         raise HTTPException(status_code=400, detail="path is required")
-    file_name, raw = _read_supported_doc(path_text, max_size=40 * 1024 * 1024)
-
     try:
+        file_name, raw = _read_supported_doc(path_text, max_size=40 * 1024 * 1024)
         pdf_bytes = render_to_pdf_via_hwp_engine(file_name, raw)
+    except DocumentNotFoundError as exc:
+        return Response(status_code=204)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
