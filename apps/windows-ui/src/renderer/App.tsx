@@ -51,7 +51,7 @@ type RichBlock =
   | { type: 'paragraph'; runs: RichRun[]; bbox?: BlockBBox }
   | { type: 'table'; rows: string[][]; bbox?: BlockBBox };
 type FilePreview =
-  | { kind: 'none'; note: string }
+  | { kind: 'none'; note: string; isFileNotFound?: boolean }
   | { kind: 'text'; content: string; truncated: boolean; compareText?: string; compareLineTokens?: string[] }
   | { kind: 'rich'; blocks: RichBlock[]; content: string; truncated: boolean; compareText?: string; compareLineTokens?: string[] }
   | { kind: 'image'; url: string }
@@ -1380,7 +1380,7 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       return { kind: 'none', note: '저장 경로 기반 미리보기를 지원하지 않는 파일입니다.' };
     }
 
-    const fetchComparablePreview = async (): Promise<{ rich?: FilePreview; text?: FilePreview; detail?: string }> => {
+    const fetchComparablePreview = async (): Promise<{ rich?: FilePreview; text?: FilePreview; detail?: string; isFileNotFound?: boolean }> => {
       const res = await fetch(`${window.hihangul.agentBaseUrl}/v1/viewer/preview-from-path`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1388,9 +1388,15 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       });
       if (!res.ok) {
         const detail = await res.text().catch(() => '');
+        if (res.status === 404) {
+          return { isFileNotFound: true, detail: '문서를 찾을 수 없습니다.' };
+        }
         return { detail: detail || String(res.status) };
       }
       const data = await res.json();
+      if (data?.ok === false && data?.error === 'file_not_found') {
+        return { isFileNotFound: true, detail: '문서를 찾을 수 없습니다.' };
+      }
       const preview = data?.preview;
       if (preview?.kind === 'rich' && Array.isArray(preview.blocks)) {
         const content = typeof preview.content === 'string' ? preview.content : '';
@@ -1429,9 +1435,15 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: fileMeta.storedPath }),
       });
+      if (pdfRes.status === 204 || pdfRes.status === 404) {
+        return { kind: 'none', note: '존재하지 않는 문서입니다.', isFileNotFound: true };
+      }
       if (pdfRes.ok) {
         const pdfBlob = await pdfRes.blob();
         const compare = await fetchComparablePreview().catch(() => ({}));
+        if ((compare as any).isFileNotFound) {
+          return { kind: 'none', note: '존재하지 않는 문서입니다.', isFileNotFound: true };
+        }
         const compareText = compare.rich?.compareText || compare.text?.compareText;
         const compareLineTokens = compare.rich?.compareLineTokens || compare.text?.compareLineTokens;
         const richBlocks = compare.rich?.kind === 'rich' ? compare.rich.blocks : undefined;
@@ -1439,6 +1451,9 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       }
       const renderDetail = await pdfRes.text().catch(() => '');
       const compare = await fetchComparablePreview().catch(() => ({}));
+      if ((compare as any).isFileNotFound) {
+        return { kind: 'none', note: '존재하지 않는 문서입니다.', isFileNotFound: true };
+      }
       if (compare.rich) return compare.rich;
       if (compare.text) return compare.text;
       const detail = compare.detail || renderDetail || 'unknown error';
@@ -1708,6 +1723,12 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
         if (cancelled) return;
 
         // Result file can appear slightly later than the run response.
+        if (preview.kind === 'none' && preview.isFileNotFound) {
+          attempts = 6; // Force stop polling
+          setFilePreviewById((prev) => ({ ...prev, [activeFile.id]: preview }));
+          return;
+        }
+
         if (preview.kind === 'none' && attempts < 6) {
           return;
         }
@@ -1744,7 +1765,13 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
   }, [activeFile?.id, activeFile?.storedPath, filePreviewById]);
 
   const handleDeleteSession = (sessionId: string) => {
+    let sessionFilesToClear: string[] = [];
     setSessions((prev) => {
+      const sessionToDelete = prev.find((s) => s.id === sessionId);
+      if (sessionToDelete) {
+        sessionFilesToClear = sessionToDelete.files.map((f) => f.id);
+      }
+
       const next = prev.filter((s) => s.id !== sessionId);
       if (activeSessionId === sessionId) {
         setCurrentView('dashboard');
@@ -1752,6 +1779,18 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       }
       return next;
     });
+
+    // Purge preview tracking data for all files belonging to the deleted session
+    if (sessionFilesToClear.length > 0) {
+      setFilePreviewById((prev) => {
+        const next = { ...prev };
+        for (const fileId of sessionFilesToClear) {
+          delete next[fileId];
+        }
+        return next;
+      });
+    }
+
     setContextMenu(null);
   };
 
