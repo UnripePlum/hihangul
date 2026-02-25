@@ -37,10 +37,10 @@ Follow these exact steps to set up the new branch environment:
    cat .agents/rules/windows-brain.md > <TARGET_DIR>/BRAIN_PROMPT.md
    echo -e "\n# Task Description\n<Insert Brain Task Here>" >> <TARGET_DIR>/BRAIN_PROMPT.md
 
-   # 4. Open the root directory in separate IDE windows, targeting each prompt file
-   antigravity <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md &
-   antigravity <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md &
-   antigravity <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md &
+   # 4. Open each application subdirectory and its prompt file in separate IDE windows
+   antigravity -n <TARGET_DIR>/apps/windows-ui <TARGET_DIR>/UI_PROMPT.md &
+   antigravity -n <TARGET_DIR>/apps/windows-agent <TARGET_DIR>/AGENT_PROMPT.md &
+   antigravity -n <TARGET_DIR>/apps/windows-brain <TARGET_DIR>/BRAIN_PROMPT.md &
    ```
 
 3. **Initialize the Codex Agents:**
