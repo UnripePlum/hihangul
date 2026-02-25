@@ -15,8 +15,8 @@
      - `docs/agent-requests/` (ONLY for agent requests).
      - `scripts/dev/brain/`
    - **ABSOLUTE RULE**: All other directories and files are **STRICTLY READ-ONLY**. You MUST NOT touch them under any circumstances.
-   - **CROSS-AGENT REQUESTS**: If you need to change another agent's working directory or shared directories, you MUST NOT modify them directly. You MUST create an agent-request document and use the `send-request` skill.
-   - **CRITICAL ENFORCEMENT**: You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module (like `windows-agent` or `windows-ui`), you MUST refuse and use the `agent-request` skill instead.
+   - **CROSS-AGENT COMMUNICATION**: If you need changes in another agent's domain, you do not need to make requests or wait. You are operating in a multi-agent worktree environment. You should instruct the user to ask the respective agent in their window.
+   - **CRITICAL ENFORCEMENT**: You MUST NOT modify, create, delete, or rename any files or folders outside of the above allowed paths. If the user asks you to modify code in another module, you MUST refuse.
    - **NO GENERIC COMMANDS**: NEVER use generic shell commands like `rm -rf`, `sed`, `awk`, or `echo >` on files outside of your allowed directories.
 
 2. **Outside Modifications**:
@@ -27,17 +27,6 @@
    - It will determine the target application (brain, agent, ui) and summarize today's work.
    - The document MUST be named in the format `YYYY-MM-DD-[TARGET]-work-summary-[title].md` (e.g., `2026-02-21-BRAIN-work-summary-vector-search.md`).
    - The document MUST be saved in `docs/reports/brain/` (if target is brain).
-
-4. **Agent Requests (`agent-request` skill)**:
-   - If changes are needed in `windows-agent` or `windows-ui`, document the requirements using the `agent-request` skill.
-   - The document MUST clarify where the request originates and where it is sent.
-   - The document MUST be named in the format `YYYY-MM-DD-[SOURCE]->[TARGET]-[title].md` (e.g., `2026-02-21-BRAIN->AGENT-api-update.md`).
-   - The document MUST be saved in `docs/agent-requests/`.
-   - After writing the request, you MUST notify the user.
-
-5. **Immutable Agent Requests**:
-   - Once a request document in `docs/agent-requests/` has been shared or sent to another branch using the `send-request` skill, it becomes **STRICTLY READ-ONLY**.
-   - You MUST NEVER modify the document again on this branch to prevent cross-branch merge conflicts.
 
 ## Current Status & Implementation Details
 - **Tech Stack**: Python, FastAPI, SQLite-vec. Runs on `localhost:8000`.
