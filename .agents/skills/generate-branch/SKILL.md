@@ -1,11 +1,11 @@
 ---
 name: generate-branch
-description: Generates a new branch and creates a single isolated git worktree, launching separate IDE environments for the existing ui, agent, and brain subdirectories.
+description: Generates a new branch and creates a single isolated git worktree, launching separate IDE environments pointing to the same root for ui, agent, and brain collaboration.
 ---
 
 # Generate Branch Skill
 
-Use this skill when you need to start a completely new task/feature in an isolated environment without affecting the current workspace. This skill creates a new branch and sets up a single git worktree. It then opens the `apps/windows-ui`, `apps/windows-agent`, and `apps/windows-brain` directories from that worktree so that all three AI agents can collaborate on the same branch simultaneously.
+Use this skill when you need to start a completely new task/feature in an isolated environment without affecting the current workspace. This skill creates a new branch and sets up a single git worktree. It then opens that worktree in three separate IDE windows with distinct prompt files so all three AI agents can collaborate safely on the same branch.
 
 ## Instructions
 
@@ -27,32 +27,32 @@ Follow these exact steps to set up the new branch environment:
    git branch <BRANCH_NAME> main
    git worktree add <TARGET_DIR> <BRANCH_NAME>
 
-   # 3. Create AGENT_PROMPT.md in each application subdirectory within the worktree
-   cat .agents/rules/windows-ui.md > <TARGET_DIR>/apps/windows-ui/AGENT_PROMPT.md
-   echo -e "\n# Task Description\n<Insert UI Task Here>" >> <TARGET_DIR>/apps/windows-ui/AGENT_PROMPT.md
+   # 3. Create distinct prompt files in the root of the worktree
+   cat .agents/rules/windows-ui.md > <TARGET_DIR>/UI_PROMPT.md
+   echo -e "\n# Task Description\n<Insert UI Task Here>" >> <TARGET_DIR>/UI_PROMPT.md
 
-   cat .agents/rules/windows-agent.md > <TARGET_DIR>/apps/windows-agent/AGENT_PROMPT.md
-   echo -e "\n# Task Description\n<Insert Agent Task Here>" >> <TARGET_DIR>/apps/windows-agent/AGENT_PROMPT.md
+   cat .agents/rules/windows-agent.md > <TARGET_DIR>/AGENT_PROMPT.md
+   echo -e "\n# Task Description\n<Insert Agent Task Here>" >> <TARGET_DIR>/AGENT_PROMPT.md
 
-   cat .agents/rules/windows-brain.md > <TARGET_DIR>/apps/windows-brain/AGENT_PROMPT.md
-   echo -e "\n# Task Description\n<Insert Brain Task Here>" >> <TARGET_DIR>/apps/windows-brain/AGENT_PROMPT.md
+   cat .agents/rules/windows-brain.md > <TARGET_DIR>/BRAIN_PROMPT.md
+   echo -e "\n# Task Description\n<Insert Brain Task Here>" >> <TARGET_DIR>/BRAIN_PROMPT.md
 
-   # 4. Open each application subdirectory and its prompt file in separate IDE windows
+   # 4. Open the root directory in separate IDE windows, targeting each prompt file
    if [ -n "$GIT_ASKPASS" ]; then
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR>/apps/windows-ui <TARGET_DIR>/apps/windows-ui/AGENT_PROMPT.md
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR>/apps/windows-agent <TARGET_DIR>/apps/windows-agent/AGENT_PROMPT.md
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR>/apps/windows-brain <TARGET_DIR>/apps/windows-brain/AGENT_PROMPT.md
+     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md
+     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md
+     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md
    else
-     code <TARGET_DIR>/apps/windows-ui <TARGET_DIR>/apps/windows-ui/AGENT_PROMPT.md
-     code <TARGET_DIR>/apps/windows-agent <TARGET_DIR>/apps/windows-agent/AGENT_PROMPT.md
-     code <TARGET_DIR>/apps/windows-brain <TARGET_DIR>/apps/windows-brain/AGENT_PROMPT.md
+     code -n <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md
+     code -n <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md
+     code -n <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md
    fi
    ```
 
 3. **Initialize the Codex Agents:**
-   - Three separate IDE windows will open, each rooted in their respective application folder.
-   - The user (or the agent) can copy the contents of `AGENT_PROMPT.md` in each respective window to start the AI collaboration.
+   - Three separate IDE windows will open, all sharing the same repository root.
+   - The user (or the agent) can copy the contents of their respective `*_PROMPT.md` file into the new AI chat session to assume their role.
 
 4. **Notify the User:**
    - Use the `notify_user` tool in the CURRENT window to let the user know that the new workspaces have been spawned, the branch is ready, and they should switch to the new windows.
-   - Example message: *"ui, agent, brain을 위한 3개의 별도 작업 공간 창이 열렸습니다! 각 창에서 담당 AI를 깨워주세요."*
+   - Example message: *"ui, agent, brain을 위한 3개의 별도 작업 공간(IDE 창)이 열렸습니다! 각 창에서 개별 PROMPT 파일을 기반으로 담당 AI를 깨워주세요."*
