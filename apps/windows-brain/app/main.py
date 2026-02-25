@@ -101,30 +101,16 @@ async def process_task(lane_id: str, payload: dict) -> dict:
     if not source_file_path:
         source_file_path = "input.hwp"
 
-    nlu = nlu_engine.parse(user_input)
-    plan = planner.build_plan(nlu)
-    plan.directives = [
-        *plan.directives,
-        {"op": "source_path", "value": source_file_path},
-        {"op": "output_path", "value": output_file_path},
-    ]
-    memory.append_session_message(session_id, "user", user_input)
-    memory.create_run_record(
-        run_id=run_id,
-        lane_id=lane_id,
-        session_id=session_id,
-        user_id=user_id,
-        plan_title=plan.title,
-        provider=provider,
-        profile_id=profile_id,
-        dry_run=payload["dry_run"],
-        persist_program=payload["persist_program"],
-    )
-
     snippets = memory.query_recent_knowledge(limit=3)
     search_hits = memory.search_index(keyword=user_input, limit=2)
     session_messages = memory.get_session_messages(session_id=session_id, limit=8)
-    session_context = [f"{item['role']}: {item['content']}" for item in session_messages]
+    
+    nlu_context_lines = [f"{item['role']}: {item['content']}" for item in session_messages]
+    coder_context_lines = list(nlu_context_lines)
+
+    previous_code = memory.get_latest_successful_run_code(session_id=session_id)
+    if previous_code:
+        coder_context_lines.append(f"previously_generated_code:\n```python\n{previous_code}\n```")
 
     # STEP 1 & 2: Document Structure Identification (Heuristics + sLLM)
     structure_context = ""
@@ -144,15 +130,47 @@ async def process_task(lane_id: str, payload: dict) -> dict:
                 f"{structure_info['title_candidate_index']} (Confidence: {structure_info.get('confidence')}, "
                 f"Reason: {structure_info.get('reason')})"
             )
-            session_context.append(structure_context)
+            nlu_context_lines.append(structure_context)
+            coder_context_lines.append(structure_context)
     except Exception as e:
         print(f"Structure parsing skipped or failed: {e}")
+
+    context_str = "\n".join(nlu_context_lines)
+
+    nlu = nlu_engine.parse(
+        user_input,
+        orchestrator=orchestrator,
+        provider=provider,
+        auth_profile=profile,
+        context=context_str
+    )
+    
+    print(f"\n[NLU Parse Result]\nIntent: {nlu.intent}\nEntities: {nlu.entities}\nActions: {nlu.actions}\n")
+    
+    plan = planner.build_plan(nlu)
+    plan.directives = [
+        *plan.directives,
+        {"op": "source_path", "value": source_file_path},
+        {"op": "output_path", "value": output_file_path},
+    ]
+    memory.append_session_message(session_id, "user", user_input)
+    memory.create_run_record(
+        run_id=run_id,
+        lane_id=lane_id,
+        session_id=session_id,
+        user_id=user_id,
+        plan_title=plan.title,
+        provider=provider,
+        profile_id=profile_id,
+        dry_run=payload["dry_run"],
+        persist_program=payload["persist_program"],
+    )
 
     assembled_prompt = prompt_assembler.build_prompt(
         user_input=user_input,
         plan=plan,
         memory_snippets=[*snippets, *search_hits],
-        session_context=session_context,
+        session_context=coder_context_lines,
         guardrail_policy=GUARDRAIL_POLICY,
     )
     generated_code = orchestrator.generate_code(

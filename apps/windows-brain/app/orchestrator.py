@@ -81,71 +81,97 @@ class LLMOrchestrator:
         provider: str,
         chosen_model: str,
         auth_profile: dict[str, Any],
+        extract_code: bool = True,
     ) -> str | None:
         if provider == "codex":
-            return self._generate_with_codex_cli(assembled_prompt, chosen_model)
+            return self._generate_with_codex_cli(assembled_prompt, chosen_model, extract_code)
         if provider == "claude":
-            return self._generate_with_claude(assembled_prompt, chosen_model, auth_profile)
+            return self._generate_with_claude(assembled_prompt, chosen_model, auth_profile, extract_code)
         return None
 
-    def _generate_with_codex_cli(self, prompt: str, model: str) -> str | None:
-        if shutil.which("codex") is None:
-            return None
+    def _generate_with_codex_cli(self, prompt: str, model: str, extract_code: bool = True) -> str | None:
+        cli_path = shutil.which("codex")
+        if not cli_path:
+            raise RuntimeError("codex CLI not found in PATH")
 
-        # Best-effort one-shot CLI call. If command shape differs by version, fail fast and fallback.
+        # Best-effort one-shot CLI call. Pass via STDIN to bypass workspace reading
         candidates: list[list[str]] = [
-            ["codex", "exec", "--model", model, prompt],
-            ["codex", "exec", prompt],
+            [cli_path, "exec", "--model", model],
+            [cli_path, "exec"],
         ]
+        last_error = "codex CLI failed"
         for args in candidates:
             try:
                 proc = subprocess.run(
                     args,
+                    input=prompt,
                     capture_output=True,
-                    text=True,
                     timeout=90,
                     check=False,
+                    encoding="utf-8",
+                    errors="replace",
                 )
-            except Exception:
+            except Exception as e:
+                last_error = f"Subprocess exception: {e}"
                 continue
             if proc.returncode != 0:
+                last_error = f"Return code {proc.returncode}, stderr: {proc.stderr}"
                 continue
-            parsed = self._extract_python_code(proc.stdout or "")
-            if parsed:
-                return parsed
-        return None
+            if extract_code:
+                parsed = self._extract_python_code(proc.stdout or "")
+                if parsed:
+                    return parsed
+                last_error = "Python code block not found in stdout"
+            else:
+                out = (proc.stdout or "").strip()
+                if out:
+                    return out
+                last_error = "stdout was empty"
+        raise RuntimeError(f"Codex CLI generation failed: {last_error}")
 
-    def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any]) -> str | None:
+    def _generate_with_claude(self, prompt: str, model: str, auth_profile: dict[str, Any], extract_code: bool = True) -> str | None:
         token = str(auth_profile.get("token") or "").strip()
         if token:
-            code = self._generate_with_claude_http(prompt, model, token)
+            code = self._generate_with_claude_http(prompt, model, token, extract_code)
             if code:
                 return code
 
-        if shutil.which("claude") is None:
-            return None
+        cli_path = shutil.which("claude")
+        if not cli_path:
+            raise RuntimeError("claude CLI not found in PATH")
 
         candidates: list[list[str]] = [
-            ["claude", "-p", prompt, "--model", model],
-            ["claude", "-p", prompt],
+            [cli_path, "-p", prompt, "--model", model],
+            [cli_path, "-p", prompt],
         ]
+        last_error = "claude CLI failed"
         for args in candidates:
             try:
                 proc = subprocess.run(
                     args,
                     capture_output=True,
-                    text=True,
                     timeout=90,
                     check=False,
+                    encoding="utf-8",
+                    errors="replace",
                 )
-            except Exception:
+            except Exception as e:
+                last_error = f"Subprocess exception: {e}"
                 continue
             if proc.returncode != 0:
+                last_error = f"Return code {proc.returncode}, stderr: {proc.stderr}"
                 continue
-            parsed = self._extract_python_code(proc.stdout or "")
-            if parsed:
-                return parsed
-        return None
+            if extract_code:
+                parsed = self._extract_python_code(proc.stdout or "")
+                if parsed:
+                    return parsed
+                last_error = "Python code block not found in stdout"
+            else:
+                out = (proc.stdout or "").strip()
+                if out:
+                    return out
+                last_error = "stdout was empty"
+        raise RuntimeError(f"Claude CLI generation failed: {last_error}")
 
     def infer_document_structure_with_sllm(self, blocks: list[dict[str, object]]) -> dict[str, object]:
         """
@@ -200,7 +226,7 @@ class LLMOrchestrator:
         except Exception:
             return "{}"
 
-    def _generate_with_claude_http(self, prompt: str, model: str, token: str) -> str | None:
+    def _generate_with_claude_http(self, prompt: str, model: str, token: str, extract_code: bool = True) -> str | None:
         try:
             import httpx  # local import to avoid hard dependency at import time
         except Exception:
@@ -221,33 +247,45 @@ class LLMOrchestrator:
             with httpx.Client(timeout=90.0) as client:
                 resp = client.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
             if resp.status_code >= 400:
-                return None
+                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text}")
             data = resp.json()
             content = data.get("content", [])
             text_parts = [part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"]
             raw = "\n".join(text_parts).strip()
-            return self._extract_python_code(raw)
-        except Exception:
-            return None
+            if extract_code:
+                parsed = self._extract_python_code(raw)
+                if not parsed:
+                    raise RuntimeError("Python code block not found in Claude response")
+                return parsed
+            return raw
+        except Exception as e:
+            raise RuntimeError(f"Claude HTTP API failed: {e}")
 
     def _extract_python_code(self, raw: str) -> str | None:
         text = (raw or "").strip()
         if not text:
             return None
+            
+        # Refactor typographical quotes to standard quotes to prevent SyntaxError
+        text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
         if "```python" in text:
             start = text.find("```python") + len("```python")
-            end = text.find("```", start)
+            end = text.rfind("```")
             block = text[start:end if end > start else None].strip()
             return block or None
         if "```" in text:
             start = text.find("```") + 3
-            end = text.find("```", start)
+            end = text.rfind("```")
             block = text[start:end if end > start else None].strip()
             return block or None
-        # Accept plain code responses containing run(controller)
-        if "def run(controller)" in text:
+            
+        # Accept plain code responses containing controller logic
+        if "controller" in text:
             return text
-        return None
+            
+        # Fallback: Just return the raw text to avoid unhandled 'None' crashes, 
+        # allowing the execution engine to report a proper syntax error
+        return text
 
     def _build_run_body(self, plan: Plan, nlu: NLUResult) -> list[str]:
         source_path = "input.hwp"
