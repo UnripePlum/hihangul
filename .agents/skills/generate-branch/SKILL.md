@@ -34,7 +34,12 @@ Follow these exact steps to set up the new branch environment:
    cat .agents/rules/windows-agent.md > <TARGET_DIR>/AGENT_PROMPT.md
    echo -e "\n# Task Description\n<Insert Agent Task Here>" >> <TARGET_DIR>/AGENT_PROMPT.md
 
-   # 4. Create distinct workspace files to force separate IDE windows for the same root
+   # 4. Create distinct workspace files to force separate IDE windows for the same root.
+   # Note: VS Code (antigravity) natively prevents opening the exact same target directory
+   # in multiple separate windows simultaneously. It will just focus the existing window instead.
+   # By creating separate `.code-workspace` files that all point to the current directory (`.`),
+   # we trick the IDE into treating them as distinct projects, allowing us to spawn 3 independent
+   # windows that all share the exact same root directory.
    echo '{"folders": [{"path": "."}]}' > <TARGET_DIR>/ui.code-workspace
    echo '{"folders": [{"path": "."}]}' > <TARGET_DIR>/agent.code-workspace
    echo '{"folders": [{"path": "."}]}' > <TARGET_DIR>/brain.code-workspace
