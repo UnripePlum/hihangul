@@ -38,15 +38,9 @@ Follow these exact steps to set up the new branch environment:
    echo -e "\n# Task Description\n<Insert Brain Task Here>" >> <TARGET_DIR>/BRAIN_PROMPT.md
 
    # 4. Open the root directory in separate IDE windows, targeting each prompt file
-   if [ -n "$GIT_ASKPASS" ]; then
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md
-     open -n -a "${GIT_ASKPASS%%.app/*}.app" <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md
-   else
-     code -n <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md
-     code -n <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md
-     code -n <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md
-   fi
+   antigravity <TARGET_DIR> <TARGET_DIR>/UI_PROMPT.md &
+   antigravity <TARGET_DIR> <TARGET_DIR>/AGENT_PROMPT.md &
+   antigravity <TARGET_DIR> <TARGET_DIR>/BRAIN_PROMPT.md &
    ```
 
 3. **Initialize the Codex Agents:**
