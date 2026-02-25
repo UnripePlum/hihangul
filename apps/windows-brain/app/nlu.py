@@ -48,7 +48,7 @@ class NLUEngine:
         prompt = (
             "<instructions>\n"
             "Analyze the text in the <user_input> block and extract the intent, entities (global target_scope), and actions into a JSON object.\n"
-            "- If generic scope: map to 'all' or 'first_line'.\n"
+            "- If generic scope: map to 'all', 'first_line', or 'except_first_line'.\n"
             "- If specific section ('사업의 목적', '결론'): output that exact phrase.\n"
             "- CRITICAL RULE 1: If formatting differs by section, include 'target_scope' inside each action object.\n"
             "- CRITICAL RULE 2: If the input is conversational (no editing command), output empty actions array and 'general_automation' intent.\n"

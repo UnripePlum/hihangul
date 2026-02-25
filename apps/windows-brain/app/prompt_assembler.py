@@ -49,7 +49,7 @@ API_REFERENCE = (
 SCOPE_GUIDELINE = (
     "### Scope Parameter Guideline ###\n"
     "스타일 적용 API(`set_font_size`, `set_bold`, `set_font_family`, `set_align` 등)의 기본값은 `scope='all'` 이지만, "
-    "사용자가 특정한 텍스트 범위(예: '첫 줄', '특정 단어')를 요청한 경우 반드시 `scope='first_line'` 등과 같이 타겟 영역을 파라미터로 명시해서 호출해야 한다.\n"
+    "사용자가 특정한 텍스트 범위(예: '첫 줄', '첫 줄 제외')를 요청한 경우 반드시 `scope='first_line'` 또는 `scope='except_first_line'` 등과 같이 타겟 영역을 파라미터로 명시해서 호출해야 한다.\n"
 )
 
 
