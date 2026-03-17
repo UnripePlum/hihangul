@@ -6,7 +6,11 @@ GUARDRAIL_POLICY = (
     "You are a safe automation planner. Never generate destructive file, shell, registry, or network code. "
     "Use only the HwpController interface methods: open_document(path), insert_text(text), "
     "replace_text(before, after, scope), set_bold(value, scope), set_font_size(size_pt, scope), "
-    "set_font_family(family, scope), save_document(path). "
+    "set_font_family(family, scope), set_align(align, scope), align_center(), "
+    "move_doc_begin(), move_para_end(), select_para(), run_action(action_id), save_document(path), "
+    "create_snapshot(), restore_snapshot(snapshot_id), "
+    "get_table_cell_text(table_index, row, col), set_table_cell_text(table_index, row, col, text), "
+    "get_table_dimensions(table_index). "
     "Always preserve the original file and save to a different output copy path. "
     "Do not import os/subprocess/socket/shutil/pathlib/httpx/requests or call eval/exec/open."
 )
@@ -41,7 +45,18 @@ _ALLOWED_CONTROLLER_METHODS = {
     "set_bold",
     "set_font_size",
     "set_font_family",
+    "set_align",
+    "align_center",
+    "move_doc_begin",
+    "move_para_end",
+    "select_para",
+    "run_action",
     "save_document",
+    "create_snapshot",
+    "restore_snapshot",
+    "get_table_cell_text",
+    "set_table_cell_text",
+    "get_table_dimensions",
 }
 
 

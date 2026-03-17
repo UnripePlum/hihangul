@@ -62,6 +62,28 @@ class HwpController(ABC):
     def run_action(self, action_id: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def create_snapshot(self) -> str:
+        """Create a snapshot of the current document state. Returns a snapshot ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def restore_snapshot(self, snapshot_id: str) -> None:
+        """Restore the document to a previously created snapshot."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_table_cell_text(self, table_index: int, row: int, col: int) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_table_cell_text(self, table_index: int, row: int, col: int, text: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_table_dimensions(self, table_index: int) -> tuple[int, int]:
+        raise NotImplementedError
+
 
 class HwpControllerStateError(ValueError):
     pass
@@ -76,6 +98,7 @@ class InMemoryHwpAdapter(HwpController):
     _active_document_bytes: bytes | None = None
     _active_document_ext: str = ""
     _operations: list[str] = field(default_factory=list)
+    _snapshots: dict[str, tuple[str, bytes | None]] = field(default_factory=dict)
 
     def open_document(self, path: str) -> None:
         normalized_path = self._normalize_path(path)
@@ -188,6 +211,63 @@ class InMemoryHwpAdapter(HwpController):
             raise HwpControllerStateError("run_action requires an opened document")
         self._record_operation(f"run_action:{action_id}")
 
+    def create_snapshot(self) -> str:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("create_snapshot requires an opened document")
+        snapshot_id = f"snap-{len(self._snapshots)}"
+        self._snapshots[snapshot_id] = (self._active_document_text, self._active_document_bytes[:] if self._active_document_bytes is not None else None)
+        self._record_operation(f"create_snapshot:{snapshot_id}")
+        return snapshot_id
+
+    def restore_snapshot(self, snapshot_id: str) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("restore_snapshot requires an opened document")
+        if snapshot_id not in self._snapshots:
+            raise HwpControllerStateError(f"snapshot not found: {snapshot_id}")
+        text, doc_bytes = self._snapshots[snapshot_id]
+        self._active_document_text = text
+        self._active_document_bytes = doc_bytes
+        self._record_operation(f"restore_snapshot:{snapshot_id}")
+
+    def get_table_cell_text(self, table_index: int, row: int, col: int) -> str:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("get_table_cell_text requires an opened document")
+        if self._active_document_ext == ".hwpx" and self._active_document_bytes:
+            tables = _hwpx_get_tables(self._active_document_bytes)
+            if table_index >= len(tables):
+                raise HwpControllerStateError(f"table index {table_index} out of range (found {len(tables)} tables)")
+            table = tables[table_index]
+            if row >= len(table):
+                raise HwpControllerStateError(f"row {row} out of range (table has {len(table)} rows)")
+            if col >= len(table[row]):
+                raise HwpControllerStateError(f"col {col} out of range (row has {len(table[row])} columns)")
+            return table[row][col]
+        self._record_operation(f"get_table_cell_text:{table_index}:{row}:{col}")
+        return ""
+
+    def set_table_cell_text(self, table_index: int, row: int, col: int, text: str) -> None:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("set_table_cell_text requires an opened document")
+        if self._active_document_ext == ".hwpx" and self._active_document_bytes:
+            self._active_document_bytes = _hwpx_set_table_cell_text(
+                self._active_document_bytes, table_index, row, col, text
+            )
+        self._record_operation(f"set_table_cell_text:{table_index}:{row}:{col}:{text}")
+
+    def get_table_dimensions(self, table_index: int) -> tuple[int, int]:
+        if self._active_document_path is None:
+            raise HwpControllerStateError("get_table_dimensions requires an opened document")
+        if self._active_document_ext == ".hwpx" and self._active_document_bytes:
+            tables = _hwpx_get_tables(self._active_document_bytes)
+            if table_index >= len(tables):
+                raise HwpControllerStateError(f"table index {table_index} out of range (found {len(tables)} tables)")
+            table = tables[table_index]
+            rows = len(table)
+            cols = max((len(r) for r in table), default=0)
+            return (rows, cols)
+        self._record_operation(f"get_table_dimensions:{table_index}")
+        return (0, 0)
+
     def execution_trace(self) -> dict[str, Any]:
         return {
             "adapter": self.adapter_name,
@@ -259,6 +339,18 @@ def _hwpx_replace_text(hwpx_bytes: bytes, before: str, after: str, scope: str = 
                 replaced_once = True
                 return m.group(0).replace(before, after, 1)
             xml = re.sub(r"(<hp:t[^>]*>.*?</hp:t>)", repl_first, xml, flags=re.DOTALL)
+        elif scope == "except_first_line":
+            first_skipped = False
+            def repl_except_first(m: re.Match[str]) -> str:
+                nonlocal first_skipped
+                body = m.group(1)
+                if before not in body:
+                    return m.group(0)
+                if not first_skipped:
+                    first_skipped = True
+                    return m.group(0)
+                return m.group(0).replace(before, after)
+            xml = re.sub(r"(<hp:t[^>]*>.*?</hp:t>)", repl_except_first, xml, flags=re.DOTALL)
         else:
             xml = xml.replace(before, after)
             
@@ -415,7 +507,10 @@ def _hwpx_apply_style(
                 if text and run_stack:
                     if scope == "first_line" and first_done:
                         continue
-                    
+                    if scope == "except_first_line" and not first_done:
+                        first_done = True
+                        continue
+
                     run_idx = run_stack[-1]
                     if run_idx not in modified_tokens:
                         run_open = tokens[run_idx]
@@ -641,6 +736,70 @@ def _hwpx_apply_align(
     entries[header_name] = header_xml.encode("utf-8")
     return _write_hwpx_entries(entries)
 
+
+def _hwpx_get_tables(hwpx_bytes: bytes) -> list[list[list[str]]]:
+    entries = _read_hwpx_entries(hwpx_bytes)
+    tables: list[list[list[str]]] = []
+    for sec_name in _section_names(entries):
+        xml = entries[sec_name].decode("utf-8", errors="ignore")
+        for tbl_match in re.finditer(r"<hp:tbl\b[^>]*>(.*?)</hp:tbl>", xml, flags=re.DOTALL):
+            tbl_body = tbl_match.group(1)
+            table: list[list[str]] = []
+            for tr_match in re.finditer(r"<hp:tr\b[^>]*>(.*?)</hp:tr>", tbl_body, flags=re.DOTALL):
+                tr_body = tr_match.group(1)
+                row: list[str] = []
+                for tc_match in re.finditer(r"<hp:tc\b[^>]*>(.*?)</hp:tc>", tr_body, flags=re.DOTALL):
+                    tc_body = tc_match.group(1)
+                    texts = re.findall(r"<hp:t[^>]*>(.*?)</hp:t>", tc_body, flags=re.DOTALL)
+                    cell_text = "".join(re.sub(r"<[^>]+>", "", t) for t in texts).strip()
+                    row.append(cell_text)
+                table.append(row)
+            tables.append(table)
+    return tables
+
+
+def _hwpx_set_table_cell_text(hwpx_bytes: bytes, table_index: int, row: int, col: int, text: str) -> bytes:
+    entries = _read_hwpx_entries(hwpx_bytes)
+    table_count = 0
+    for sec_name in _section_names(entries):
+        xml = entries[sec_name].decode("utf-8", errors="ignore")
+        modified = False
+
+        def replace_tbl(m: re.Match[str]) -> str:
+            nonlocal table_count, modified
+            tbl_full = m.group(0)
+            if table_count != table_index:
+                table_count += 1
+                return tbl_full
+            table_count += 1
+            tbl_body = m.group(1)
+            tr_matches = list(re.finditer(r"<hp:tr\b[^>]*>.*?</hp:tr>", tbl_body, flags=re.DOTALL))
+            if row >= len(tr_matches):
+                return tbl_full
+            tr_match = tr_matches[row]
+            tr_body = tr_match.group(0)
+            tc_matches = list(re.finditer(r"<hp:tc\b[^>]*>.*?</hp:tc>", tr_body, flags=re.DOTALL))
+            if col >= len(tc_matches):
+                return tbl_full
+            tc_match = tc_matches[col]
+            tc_full = tc_match.group(0)
+
+            t_match = re.search(r"(<hp:t[^>]*>)(.*?)(</hp:t>)", tc_full, flags=re.DOTALL)
+            if t_match:
+                new_tc = tc_full[: t_match.start(2)] + text + tc_full[t_match.end(2):]
+            else:
+                new_tc = tc_full.replace("</hp:tc>", f"<hp:t>{text}</hp:t></hp:tc>", 1)
+
+            new_tr = tr_body[: tc_match.start()] + new_tc + tr_body[tc_match.end():]
+            new_tbl = tbl_full[: tr_match.start()] + new_tr + tbl_full[tr_match.end():]
+            modified = True
+            return new_tbl
+
+        new_xml = re.sub(r"<hp:tbl\b[^>]*>(.*?)</hp:tbl>", replace_tbl, xml, flags=re.DOTALL)
+        if modified:
+            entries[sec_name] = new_xml.encode("utf-8")
+            break
+    return _write_hwpx_entries(entries)
 
 
 class PyHwpxAdapter(InMemoryHwpAdapter):

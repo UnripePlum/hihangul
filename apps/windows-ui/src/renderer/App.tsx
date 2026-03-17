@@ -1065,7 +1065,10 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
   const [isProcessing, setIsProcessing] = useState(false);
   const [diffMode, setDiffMode] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; file: WorkspaceFile } | null>(null);
   const [visibleRecentCount, setVisibleRecentCount] = useState(4);
   const [storeReady, setStoreReady] = useState(false);
@@ -1789,6 +1792,16 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
     };
   }, [activeFile?.id, activeFile?.storedPath, filePreviewById]);
 
+  const handleRenameSession = (sessionId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s))
+    );
+    setRenamingSessionId(null);
+    setRenameText('');
+  };
+
   const handleDeleteSession = (sessionId: string) => {
     let sessionFilesToClear: string[] = [];
     setSessions((prev) => {
@@ -1893,20 +1906,37 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
           </div>
           <div className="space-y-1 px-2 mb-8">
             {sessions.map((session) => (
-              <button
-                key={session.id}
-                onClick={() => handleNavigateSession(session.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setContextMenu({ x: event.clientX, y: event.clientY, sessionId: session.id });
-                }}
-                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center gap-3 transition-colors ${activeSessionId === session.id && currentView === 'workspace' ? 'bg-slate-800 text-white border-l-2 border-blue-500' : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                type="button"
-              >
-                <MessageSquare className="w-4 h-4 opacity-70" />
-                <span className="truncate">{session.title}</span>
-              </button>
+              <div key={session.id} className="relative">
+                {renamingSessionId === session.id ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800">
+                    <MessageSquare className="w-4 h-4 opacity-70 flex-shrink-0" />
+                    <input
+                      autoFocus
+                      value={renameText}
+                      onChange={(e) => setRenameText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRenameSession(session.id, renameText);
+                        if (e.key === 'Escape') { setRenamingSessionId(null); setRenameText(''); }
+                      }}
+                      onBlur={() => handleRenameSession(session.id, renameText)}
+                      className="flex-1 bg-slate-700 text-white text-sm px-2 py-0.5 rounded outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleNavigateSession(session.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setContextMenu({ x: event.clientX, y: event.clientY, sessionId: session.id });
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center gap-3 transition-colors ${activeSessionId === session.id && currentView === 'workspace' ? 'bg-slate-800 text-white border-l-2 border-blue-500' : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                    type="button"
+                  >
+                    <MessageSquare className="w-4 h-4 opacity-70" />
+                    <span className="truncate">{session.title}</span>
+                  </button>
+                )}
+              </div>
             ))}
           </div>
 
@@ -1985,7 +2015,7 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
                 <Save className="w-4 h-4" />
                 <span>Save as App</span>
               </button>
-              <button className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100" type="button">
+              <button className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100" type="button" onClick={() => setIsSettingsOpen(true)}>
                 <Settings className="w-5 h-5" />
               </button>
             </div>
@@ -2369,6 +2399,20 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
 
       {contextMenu ? (
         <div className="fixed z-[100] bg-white border border-slate-200 rounded-lg shadow-xl p-1" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()}>
+          <button
+            className="w-full text-left text-sm px-3 py-2 rounded hover:bg-slate-100 text-slate-700"
+            onClick={() => {
+              const session = sessions.find((s) => s.id === contextMenu.sessionId);
+              if (session) {
+                setRenamingSessionId(contextMenu.sessionId);
+                setRenameText(session.title);
+              }
+              setContextMenu(null);
+            }}
+            type="button"
+          >
+            세션 이름 변경
+          </button>
           <button className="text-left text-sm px-3 py-2 rounded hover:bg-slate-100 text-rose-600" onClick={() => handleDeleteSession(contextMenu.sessionId)} type="button">
             세션 삭제
           </button>
@@ -2392,8 +2436,87 @@ const MainApp = ({ hostUserName, appVersion, provider }: { hostUserName: string;
       ) : null}
 
       <SaveLogicModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} onSave={() => logUi('launcher.save', 'saved current logic')} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <input ref={hiddenFileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileChosen} />
+    </div>
+  );
+};
+
+const SettingsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+  const [brainUrl, setBrainUrl] = useState(window.hihangul?.brainBaseUrl ?? 'http://localhost:8000');
+  const [agentUrl, setAgentUrl] = useState(window.hihangul?.agentBaseUrl ?? 'http://localhost:9000');
+  const [brainStatus, setBrainStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+  const [agentStatus, setAgentStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setBrainStatus('checking');
+    setAgentStatus('checking');
+    fetch(`${brainUrl}/health`).then((r) => {
+      setBrainStatus(r.ok ? 'ok' : 'error');
+    }).catch(() => setBrainStatus('error'));
+    fetch(`${agentUrl}/health`).then((r) => {
+      setAgentStatus(r.ok ? 'ok' : 'error');
+    }).catch(() => setAgentStatus('error'));
+  }, [isOpen, brainUrl, agentUrl]);
+
+  if (!isOpen) return null;
+
+  const statusDot = (status: 'checking' | 'ok' | 'error') => {
+    if (status === 'checking') return <Loader2 className="w-3 h-3 animate-spin text-slate-400" />;
+    if (status === 'ok') return <div className="w-2.5 h-2.5 rounded-full bg-green-500" />;
+    return <div className="w-2.5 h-2.5 rounded-full bg-red-500" />;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-lg font-semibold text-slate-800">Settings</h2>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" type="button">
+            <X className="w-5 h-5 text-slate-400" />
+          </button>
+        </div>
+        <div className="p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Service Connections</h3>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 flex-1">
+                  {statusDot(brainStatus)}
+                  <span className="text-sm font-medium text-slate-700">Brain Server</span>
+                </div>
+                <span className="text-xs text-slate-500 font-mono">{brainUrl}</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 flex-1">
+                  {statusDot(agentStatus)}
+                  <span className="text-sm font-medium text-slate-700">Agent Server</span>
+                </div>
+                <span className="text-xs text-slate-500 font-mono">{agentUrl}</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">About</h3>
+            <div className="space-y-2 text-sm text-slate-600">
+              <div className="flex justify-between">
+                <span>Version</span>
+                <span className="font-mono text-slate-500">0.2.0</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Electron</span>
+                <span className="font-mono text-slate-500">{window.hihangul?.versions?.electron ?? '-'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Chrome</span>
+                <span className="font-mono text-slate-500">{window.hihangul?.versions?.chrome ?? '-'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
