@@ -1,3 +1,193 @@
+<div align="center">
+
+<img src="apps/windows-ui/public/hihangul-logo.svg" alt="HiHangul" width="120" />
+
+<h3><b>HiHangul</b></h3>
+<p><b>Local-first AI assistant for HWP document automation on Windows.</b></p>
+
+<p>
+  <a href="#features"><strong>Features</strong></a> ·
+  <a href="#tech-stack"><strong>Tech Stack</strong></a> ·
+  <a href="#getting-started"><strong>Getting Started</strong></a> ·
+  <a href="#architecture"><strong>Architecture</strong></a>
+</p>
+
+<p>
+
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Electron](https://img.shields.io/badge/Electron-34-47848F?logo=electron&logoColor=white)](https://electronjs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](https://github.com/UnripePlum/hihangul)
+[![License](https://img.shields.io/badge/license-private-lightgrey)](./LICENSE)
+
+</p>
+
+</div>
+
+---
+
+> [!NOTE]
+> HiHangul runs entirely on your local Windows machine. No document data leaves your PC. Mac is supported as a remote dev/debug host only.
+
+## What It Does
+
+HiHangul is an AI-powered workflow agent that lives on your Windows PC and automates repetitive HWP (Hangul Word Processor) document tasks through natural conversation. Describe what you want in plain language — HiHangul plans, validates, and executes the automation, then saves it as a reusable app.
+
+It uses **OpenClaw-style serialization** to inject structured document context into LLM prompts, giving the model precise awareness of HWP document internals without requiring a cloud connection.
+
+## Features
+
+<details>
+<summary><b>Cognitive Core & LLM Orchestration</b></summary>
+
+- Understands natural language requests via an NLU pipeline
+- Routes tasks to Claude (Anthropic) or Codex (OpenAI) CLI models
+- Assembles prompts with OpenClaw-style document context injection
+- Plans multi-step HWP workflows and decomposes them into atomic actions
+
+</details>
+
+<details>
+<summary><b>Lane Queue Execution System</b></summary>
+
+- Assigns each session an independent lane for serial execution
+- Eliminates COM API conflicts caused by HWP's single-threaded apartment (STA) model
+- Queues concurrent requests safely without race conditions
+
+</details>
+
+<details>
+<summary><b>Hybrid Memory & Vector Search</b></summary>
+
+- Stores user preferences and past actions in local Markdown + JSONL
+- Embeds document history with **Ollama BGE-M3** for semantic retrieval
+- Queries with **sqlite-vec** — fully offline, no external vector database
+
+</details>
+
+<details>
+<summary><b>Zero-Trust Security Guardrails</b></summary>
+
+- Statically analyses all generated Python code with AST inspection before execution
+- Blocks OS commands, network calls, and file system writes outside the sandbox
+- Prevents overwriting original documents; isolates all output to a quarantine path
+
+</details>
+
+<details>
+<summary><b>Windows-Native Runtime</b></summary>
+
+- Brain, Agent, and UI all run locally — nothing is sent to the cloud
+- Controls HWP via the official `pywin32` COM API (`HwpController`)
+- One-command startup script launches all three services together
+
+</details>
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Desktop UI | [Electron 34](https://electronjs.org) + [React 18](https://react.dev) + [Vite 6](https://vitejs.dev) |
+| Brain API | [FastAPI 0.116](https://fastapi.tiangolo.com) + [Uvicorn](https://www.uvicorn.org) |
+| Agent API | [FastAPI 0.116](https://fastapi.tiangolo.com) + [pywin32](https://github.com/mhammond/pywin32) |
+| Embeddings | [Ollama BGE-M3](https://ollama.com) (local) |
+| Vector search | [sqlite-vec](https://github.com/asg017/sqlite-vec) |
+| LLM providers | Claude CLI (Anthropic) · Codex CLI (OpenAI) |
+| Language | Python 3.11+ · TypeScript 5 |
+
+## Getting Started
+
+> [!IMPORTANT]
+> All runtime services must run on **Windows** (recommended path: `C:\dev\hihangul`). Requires Python 3.11+, Node.js 20+, and HWP installed.
+
+### 1. Clone the repository
+
+```cmd
+git clone https://github.com/UnripePlum/hihangul C:\dev\hihangul
+cd C:\dev\hihangul
+```
+
+### 2. Start all services
+
+```cmd
+scripts\dev\start_hihangul_windows.cmd --sync
+```
+
+Python dependencies and `sqlite-vec` are installed automatically on first run.
+
+### 3. Verify services are running
+
+| Service | URL |
+|---|---|
+| Brain API | `http://localhost:8000` |
+| Agent API | `http://localhost:9000` |
+| Electron UI | Desktop window |
+
+### Stop all services
+
+```cmd
+scripts\dev\stop_hihangul_windows.cmd
+```
+
+### Remote debugging from Mac (dev only)
+
+```cmd
+set HIHANGUL_ENABLE_REMOTE_DEBUGGING=1
+scripts\dev\start_hihangul_windows.cmd --sync
+```
+
+Then open `chrome://inspect` in Chrome on your Mac and add `<Windows_IP>:9222`.
+
+## Architecture
+
+```mermaid
+graph TD
+    User["User (chat)"] --> UI
+
+    subgraph "Windows Local Runtime"
+        UI["windows-ui\nElectron + React"]
+        Brain["windows-brain\nFastAPI :8000\nNLU · Orchestrator · Memory"]
+        Agent["windows-agent\nFastAPI :9000\nAST Validator · Sandbox · HwpController"]
+        HWP["HWP COM API\n(pywin32)"]
+        VecDB["sqlite-vec\n+ Ollama BGE-M3"]
+    end
+
+    UI -->|HTTP| Brain
+    Brain -->|HTTP| Agent
+    Brain <-->|embed / search| VecDB
+    Agent -->|COM| HWP
+```
+
+**Layer breakdown:**
+
+```
+apps/
+├── windows-ui/      # Electron chat UI, diff viewer, launcher
+├── windows-brain/   # Session routing, NLU, LLM orchestration, memory
+│   └── app/
+│       ├── nlu.py            # Intent parsing
+│       ├── orchestrator.py   # Task planning & LLM routing
+│       ├── lane_queue.py     # Serial execution queue
+│       ├── memory.py         # Hybrid memory (Markdown + vector)
+│       └── guardrails.py     # Security policy
+└── windows-agent/   # Code validation, sandboxed execution, HWP control
+    └── app/
+        ├── validator.py      # AST-based static analysis
+        ├── sandbox.py        # Isolated Python executor
+        └── hwp_controller.py # HWP COM adapter
+```
+
+## Roadmap
+
+- **Phase 1** — HwpController COM control + Parallels/VM local channel ✅
+- **Phase 2** — Lane Queue + BGE-M3 / sqlite-vec hybrid memory search ✅
+- **Phase 3** — Persistent Program Launcher + Mac dev workflow debugging 🚧
+
+---
+
+<details>
+<summary>한국어 README</summary>
+
 # 🚀 HiHangul
 
 **로컬 우선(Local-First) 아래아한글(HWP) 업무 자동화 자율 에이전트**
@@ -45,7 +235,6 @@ apps/
 HiHangul 런타임은 모두 **Windows 로컬 환경**에서 구동되어야 합니다. (권장 경로: `C:\dev\hihangul`)
 
 ### 1단계: Windows 런타임 전체 시작
-제공되는 일괄 실행 스크립트로 Brain, Agent, UI를 한 번에 띄울 수 있습니다.
 
 ```cmd
 scripts\dev\start_hihangul_windows.cmd --sync
@@ -54,17 +243,18 @@ scripts\dev\start_hihangul_windows.cmd --sync
 *(최초 실행 시 Python 및 필요한 패키지와 `sqlite-vec`가 자동 설치 및 구성됩니다.)*
 
 ### 2단계: 서비스 구동 확인
-3개의 백그라운드 프로세스가 실행됩니다:
-1. **Brain API**: `http://localhost:8000` (포트 8000)
-2. **Agent API**: `http://localhost:9000` (포트 9000)
+
+1. **Brain API**: `http://localhost:8000`
+2. **Agent API**: `http://localhost:9000`
 3. **Electron UI**: 데스크톱 앱 창 표출
 
 ### 3단계: Mac에서 원격 디버깅 연결 (개발자 한정)
-Windows CMD에서 원격 디버깅 플래그를 활성화하고 서비스를 켠 뒤, Mac의 Chrome을 통해 UI를 디버깅할 수 있습니다.
+
 ```cmd
 set HIHANGUL_ENABLE_REMOTE_DEBUGGING=1
 scripts\dev\start_hihangul_windows.cmd --sync
 ```
+
 Mac의 Chrome 브라우저에서 `chrome://inspect`에 접속하여 `<Windows_IP>:9222`를 추가하세요.
 
 ---
@@ -76,4 +266,7 @@ Mac의 Chrome 브라우저에서 `chrome://inspect`에 접속하여 `<Windows_IP
 - **Phase 3 (사용자 도구화)**: Persistent Program Launcher 구현 및 Mac 개발 워크플로우 디버깅 고도화 🚧
 
 ---
+
 *Built for automating repetitive Korean office tasks, intelligently and securely.*
+
+</details>
